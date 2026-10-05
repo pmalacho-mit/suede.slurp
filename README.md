@@ -1,6 +1,6 @@
 # suede.slurp
 
-Slurp (<ins style="color:white"><span style="color:#aa1e1e">**S**</span><sub>_ve_</sub><span style="color:#aa1e1e">**l**</span><sub>_te_</sub> <span style="color:#aa1e1e">**ur**</span><sub>_l_</sub> <span style="color:#aa1e1e">**p**</span><sub>_arameterizer_</sub> <sub style="color:grey">_suede_</sub></ins>)
+Slurp (<ins style="color:white"><span style="color:#aa1e1e">**S**</span><sub>_ve_</sub><span style="color:#aa1e1e">**l**</span><sub>_te_</sub> <span style="color:#aa1e1e">**ur**</span><sub>_l_</sub> <span style="color:#aa1e1e">**p**</span><sub>_arameterizer_</sub></ins>)
 
 This repo is a [suede dependency](https://github.com/pmalacho-mit/suede). 
 
