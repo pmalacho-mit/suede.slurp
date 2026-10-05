@@ -1,3 +1,5 @@
+import type { Construct, Expect, Invoke, Throws } from "../suede.nests.slurp/dsl.import.meta.vitest.ts";
+
 export type Config = { idleMs: number; maxWaitMs: number };
 
 export class MappedDebouncer<T> {
@@ -59,4 +61,25 @@ export class MappedDebouncer<T> {
     if (config.maxWaitMs < config.idleMs)
       throw new Error("maxWaitMs must be greater than or equal to idleMs");
   }
+}
+
+// Timing needs fake timers and a `window`, so it is tested in src/debounce.timing.ts.
+declare namespace MappedDebouncer {
+  /** maxWaitMs may equal idleMs */
+  export type AcceptsEqualWaits = Expect<
+    Invoke<typeof MappedDebouncer.ValidateConfig, [config: { idleMs: 100; maxWaitMs: 100 }]>,
+    "undefined"
+  >;
+
+  /** maxWaitMs may not be shorter than idleMs */
+  export type RejectsShorterMaxWait = Throws<
+    Invoke<typeof MappedDebouncer.ValidateConfig, [config: { idleMs: 100; maxWaitMs: 50 }]>,
+    "maxWaitMs must be greater than or equal to idleMs"
+  >;
+
+  /** the constructor validates its config before anything else */
+  export type ConstructorValidates = Throws<
+    Construct<typeof MappedDebouncer, [opts: { idleMs: 100; maxWaitMs: 50 }]>,
+    "maxWaitMs must be greater than or equal to idleMs"
+  >;
 }
