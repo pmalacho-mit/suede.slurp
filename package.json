@@ -1,8 +1,11 @@
 {
-  "name": "svelte-url-parameterizer-suede",
+  "name": "suede.slurp-dev",
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "workspaces": [
+    "release"
+  ],
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
