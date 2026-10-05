@@ -21,7 +21,11 @@ import {
 export type Changes = Record<string, Encoded>;
 
 const entries = (encoded: Encoded) =>
-  encoded === undefined ? [] : typeof encoded === "string" ? [encoded] : encoded;
+  encoded === undefined
+    ? []
+    : typeof encoded === "string"
+      ? [encoded]
+      : encoded;
 
 /**
  * `href` with `changes` made to its search params, every other part untouched.
@@ -284,7 +288,10 @@ declare namespace assign {
       [
         target: Page,
         key: "page",
-        handler: Invoke<typeof verbosify, [handler: typeof Number, property: "page"]>,
+        handler: Invoke<
+          typeof verbosify,
+          [handler: typeof Number, property: "page"]
+        >,
         param: "page",
         values: ["2", "5"],
       ]
@@ -365,15 +372,28 @@ declare namespace Registry {
       Call<
         Registered,
         "read",
-        [search: '?q="hello"&tags="x"&tags="y"', target: Model, key: "query", param: "q"]
+        [
+          search: '?q="hello"&tags="x"&tags="y"',
+          target: Model,
+          key: "query",
+          param: "q",
+        ]
       >,
       Call<
         Registered,
         "read",
-        [search: '?q="hello"&tags="x"&tags="y"', target: Model, key: "tags", param: "tags"]
+        [
+          search: '?q="hello"&tags="x"&tags="y"',
+          target: Model,
+          key: "tags",
+          param: "tags",
+        ]
       >,
     ],
-    [Expect<Model["query"], "=", "hello">, Expect<Model["tags"], "=", ["x", "y"]>]
+    [
+      Expect<Model["query"], "=", "hello">,
+      Expect<Model["tags"], "=", ["x", "y"]>,
+    ]
   >;
 
   /** missing at first, a parameter leaves the target's initial value alone */
@@ -381,8 +401,16 @@ declare namespace Registry {
     [
       Call<Registered, "register", [handler: Query]>,
       Call<Registered, "register", [handler: Tags]>,
-      Call<Registered, "read", [search: "", target: Model, key: "query", param: "q"]>,
-      Call<Registered, "read", [search: "", target: Model, key: "tags", param: "tags"]>,
+      Call<
+        Registered,
+        "read",
+        [search: "", target: Model, key: "query", param: "q"]
+      >,
+      Call<
+        Registered,
+        "read",
+        [search: "", target: Model, key: "tags", param: "tags"]
+      >,
     ],
     [Expect<Model["query"], "=", "initial">, Expect<Model["tags"], "=", ["a"]>]
   >;
@@ -392,10 +420,31 @@ declare namespace Registry {
     [
       Call<Registered, "register", [handler: Query]>,
       Call<Registered, "register", [handler: Tags]>,
-      Call<Registered, "read", [search: '?q="hello"&tags="x"', target: Model, key: "query", param: "q"]>,
-      Call<Registered, "read", [search: '?q="hello"&tags="x"', target: Model, key: "tags", param: "tags"]>,
-      Call<Registered, "read", [search: "", target: Model, key: "query", param: "q"]>,
-      Call<Registered, "read", [search: "", target: Model, key: "tags", param: "tags"]>,
+      Call<
+        Registered,
+        "read",
+        [search: '?q="hello"&tags="x"', target: Model, key: "query", param: "q"]
+      >,
+      Call<
+        Registered,
+        "read",
+        [
+          search: '?q="hello"&tags="x"',
+          target: Model,
+          key: "tags",
+          param: "tags",
+        ]
+      >,
+      Call<
+        Registered,
+        "read",
+        [search: "", target: Model, key: "query", param: "q"]
+      >,
+      Call<
+        Registered,
+        "read",
+        [search: "", target: Model, key: "tags", param: "tags"]
+      >,
     ],
     [Expect<Model["query"], "=", "undefined">, Expect<Model["tags"], "=", []>]
   >;
@@ -407,9 +456,21 @@ declare namespace Registry {
       Call<Registered, "register", [handler: Tags]>,
     ],
     [
-      Expect<Call<Registered, "write", [param: "q", encoded: '"a"']>, "=", true>,
-      Expect<Call<Registered, "write", [param: "q", encoded: '"a"']>, "=", false>,
-      Expect<Call<Registered, "write", [param: "q", encoded: '"b"']>, "=", true>,
+      Expect<
+        Call<Registered, "write", [param: "q", encoded: '"a"']>,
+        "=",
+        true
+      >,
+      Expect<
+        Call<Registered, "write", [param: "q", encoded: '"a"']>,
+        "=",
+        false
+      >,
+      Expect<
+        Call<Registered, "write", [param: "q", encoded: '"b"']>,
+        "=",
+        true
+      >,
     ]
   >;
 
@@ -418,9 +479,17 @@ declare namespace Registry {
     [
       Call<Registered, "register", [handler: Query]>,
       Call<Registered, "register", [handler: Tags]>,
-      Call<Registered, "read", [search: '?q="hello"', target: Model, key: "query", param: "q"]>,
+      Call<
+        Registered,
+        "read",
+        [search: '?q="hello"', target: Model, key: "query", param: "q"]
+      >,
     ],
-    Expect<Call<Registered, "write", [param: "q", encoded: '"hello"']>, "=", false>
+    Expect<
+      Call<Registered, "write", [param: "q", encoded: '"hello"']>,
+      "=",
+      false
+    >
   >;
 
   /** a URL value written differently than it would be is read, but not rewritten */
@@ -428,11 +497,19 @@ declare namespace Registry {
     [
       Call<Registered, "register", [handler: Query]>,
       Call<Registered, "register", [handler: Tags]>,
-      Call<Registered, "read", [search: "?q=hello", target: Model, key: "query", param: "q"]>,
+      Call<
+        Registered,
+        "read",
+        [search: "?q=hello", target: Model, key: "query", param: "q"]
+      >,
     ],
     [
       Expect<Model["query"], "=", "hello">,
-      Expect<Call<Registered, "write", [param: "q", encoded: '"hello"']>, "=", false>,
+      Expect<
+        Call<Registered, "write", [param: "q", encoded: '"hello"']>,
+        "=",
+        false
+      >,
     ]
   >;
 
@@ -441,9 +518,17 @@ declare namespace Registry {
     [
       Call<Registered, "register", [handler: Query]>,
       Call<Registered, "register", [handler: Tags]>,
-      Call<Registered, "read", [search: '?q="hello"', target: Model, key: "query", param: "q"]>,
+      Call<
+        Registered,
+        "read",
+        [search: '?q="hello"', target: Model, key: "query", param: "q"]
+      >,
       Invoke<typeof Object.assign, [target: Model, source: { query: "local" }]>,
-      Call<Registered, "read", [search: '?q="hello"&other=1', target: Model, key: "query", param: "q"]>,
+      Call<
+        Registered,
+        "read",
+        [search: '?q="hello"&other=1', target: Model, key: "query", param: "q"]
+      >,
     ],
     Expect<Model["query"], "=", "local">
   >;
@@ -452,14 +537,22 @@ declare namespace Registry {
   export type Unreadable = Given<
     [
       Call<Registered, "register", [handler: Throwing]>,
-      Call<Registered, "read", [search: "?bad=not+json", target: Model, key: "query", param: "bad"]>,
+      Call<
+        Registered,
+        "read",
+        [search: "?bad=not+json", target: Model, key: "query", param: "bad"]
+      >,
     ],
     Expect<Model["query"], "=", "initial">
   >;
   type Throwing = Invoke<
     typeof verbosify,
     [
-      handler: { resolve: typeof String; deserialize: typeof JSON.parse; key: "bad" },
+      handler: {
+        resolve: typeof String;
+        deserialize: typeof JSON.parse;
+        key: "bad";
+      },
       property: "query",
     ]
   >;
@@ -481,10 +574,15 @@ declare namespace Registry {
     [
       Call<Registered, "register", [handler: Query]>,
       Call<Registered, "register", [handler: Tags]>,
-      Call<Registered, "rename", [from: "q", to: "v2_q"]>],
+      Call<Registered, "rename", [from: "q", to: "v2_q"]>,
+    ],
     [
       Expect<Call<Registered, "has", [param: "q"]>, "=", false>,
-      Expect<Call<Registered, "handler", [param: "v2_q"]>, "matches", { key: "v2_q" }>,
+      Expect<
+        Call<Registered, "handler", [param: "v2_q"]>,
+        "matches",
+        { key: "v2_q" }
+      >,
       Throws<
         Call<Registered, "rename", [from: "v2_q", to: "tags"]>,
         'URL parameter key conflict detected: "tags"'

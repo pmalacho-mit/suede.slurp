@@ -1,7 +1,10 @@
+// @vitest-environment jsdom
 import type {
   Expect,
   Invoke,
+  Throws,
 } from "../suede.nests.slurp/dsl.import.meta.vitest.ts";
+import type { count, session, text } from "./_internal/harness.svelte";
 import { untrack } from "svelte";
 import { isBrowser, supportsHistory } from "./utils";
 import { MappedDebouncer } from "./debounce";
@@ -16,11 +19,7 @@ import {
 } from "./handlers";
 import { type Changes, Registry, migrate, withParams } from "./params";
 
-export type {
-  Options,
-  ParameterHandler,
-  ParameterHandlers,
-} from "./handlers";
+export type { Options, ParameterHandler, ParameterHandlers } from "./handlers";
 export { defaults } from "./handlers";
 
 const URLChangeEvent = {
@@ -242,19 +241,458 @@ const URLParameterize = <T extends object>(
   return { cleanup, prefix: updatePrefix };
 };
 
+// Played out in a browser (jsdom) by the harness's session: each test is a
+// scenario, and what is expected after tracking starts and after each step.
 declare namespace URLParameterize {
-  /** outside a browser (on a server, say) it does nothing, and importing it does not throw */
-  type Returned = Invoke<
-    typeof URLParameterize,
-    [target: { page: 1 }, handlers: { page: typeof Number }]
+  /** a property not in the URL keeps its initial value, which is written there without a history entry */
+  export type WritesInitialValues = Expect<
+    Invoke<
+      typeof session,
+      [scenario: { initial: { q: "init" }; handlers: { q: typeof text } }]
+    >,
+    "=",
+    [{ url: { q: '"init"' }; entries: 0; values: { q: "init" }; errors: 0 }]
   >;
 
-  /** outside a browser (on a server, say) importing and calling it does not throw, and does nothing */
-  export type NoOpOutsideABrowser = [
-    Expect<Returned, "hasKey", "cleanup">,
-    Expect<Invoke<Returned["cleanup"]>, "undefined">,
-    Expect<Invoke<Returned["prefix"], [prefix: "v2_"]>, "undefined">,
+  /** a property in the URL starts from it */
+  export type ReadsTheURL = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          url: '?q="hello"';
+          initial: { q: "init" };
+          handlers: { q: typeof text };
+        },
+      ]
+    >,
+    "=",
+    [{ url: { q: '"hello"' }; entries: 0; values: { q: "hello" }; errors: 0 }]
+  >;
+
+  /** each change is written as a history entry */
+  export type WritesChanges = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          initial: { q: "init" };
+          handlers: { q: typeof text };
+          steps: [{ set: { q: "a" } }, { set: { q: "b c" } }];
+        },
+      ]
+    >,
+    "=",
+    [
+      { url: { q: '"init"' }; entries: 0; values: { q: "init" }; errors: 0 },
+      { url: { q: '"a"' }; entries: 1; values: { q: "a" }; errors: 0 },
+      { url: { q: '"b c"' }; entries: 2; values: { q: "b c" }; errors: 0 },
+    ]
+  >;
+
+  /** with history: "replace", changes are written without history entries */
+  export type ReplacesHistory = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          initial: { q: "init" };
+          handlers: { q: { resolve: typeof text; history: "replace" } };
+          steps: [{ set: { q: "a" } }];
+        },
+      ]
+    >,
+    "=",
+    [
+      { url: { q: '"init"' }; entries: 0; values: { q: "init" }; errors: 0 },
+      { url: { q: '"a"' }; entries: 0; values: { q: "a" }; errors: 0 },
+    ]
+  >;
+
+  /** the back and forward buttons bring the values back */
+  export type FollowsHistory = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          initial: { q: "init" };
+          handlers: { q: typeof text };
+          steps: [{ set: { q: "a" } }, { back: true }, { forward: true }];
+        },
+      ]
+    >,
+    "=",
+    [
+      { url: { q: '"init"' }; entries: 0; values: { q: "init" }; errors: 0 },
+      { url: { q: '"a"' }; entries: 1; values: { q: "a" }; errors: 0 },
+      { url: { q: '"init"' }; entries: 1; values: { q: "init" }; errors: 0 },
+      { url: { q: '"a"' }; entries: 1; values: { q: "a" }; errors: 0 },
+    ]
+  >;
+
+  /** navigating elsewhere is read, and not written back */
+  export type FollowsNavigation = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          initial: { q: "init" };
+          handlers: { q: typeof text };
+          steps: [{ navigate: '?q="elsewhere"' }];
+        },
+      ]
+    >,
+    "=",
+    [
+      { url: { q: '"init"' }; entries: 0; values: { q: "init" }; errors: 0 },
+      {
+        url: { q: '"elsewhere"' };
+        entries: 1;
+        values: { q: "elsewhere" };
+        errors: 0;
+      },
+    ]
+  >;
+
+  /** a parameter that leaves the URL is resolved from undefined (to "" by text), and not written back */
+  export type ResolvesRemoved = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          initial: { q: "init" };
+          handlers: { q: typeof text };
+          steps: [{ navigate: "" }];
+        },
+      ]
+    >,
+    "=",
+    [
+      { url: { q: '"init"' }; entries: 0; values: { q: "init" }; errors: 0 },
+      { url: {}; entries: 1; values: { q: "" }; errors: 0 },
+    ]
+  >;
+
+  /** a value that serializes to undefined leaves the URL */
+  export type RemovesUndefined = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          initial: { q: "init" };
+          handlers: { q: typeof text };
+          steps: [{ set: { q: undefined } }];
+        },
+      ]
+    >,
+    "=",
+    [
+      { url: { q: '"init"' }; entries: 0; values: { q: "init" }; errors: 0 },
+      { url: {}; entries: 1; values: { q: undefined }; errors: 0 },
+    ]
+  >;
+
+  /** a value that is not JSON (typed by hand) is read as text, and left as it was written */
+  export type ReadsText = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          url: "?q=hello";
+          initial: { q: "init" };
+          handlers: { q: typeof text };
+        },
+      ]
+    >,
+    "=",
+    [{ url: { q: "hello" }; entries: 0; values: { q: "hello" }; errors: 0 }]
+  >;
+
+  /** a link from when values were percent-encoded twice still reads */
+  export type ReadsLegacyLinks = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          url: "?q=%2522hi%2522";
+          initial: { q: "init" };
+          handlers: { q: typeof text };
+        },
+      ]
+    >,
+    "=",
+    [{ url: { q: "%22hi%22" }; entries: 0; values: { q: "hi" }; errors: 0 }]
+  >;
+
+  /** a value that cannot be read is reported, and the property keeps its value, which replaces it */
+  export type ReportsUnreadable = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          url: "?q={oops";
+          initial: { q: "init" };
+          handlers: {
+            q: { resolve: typeof text; deserialize: typeof JSON.parse };
+          };
+        },
+      ]
+    >,
+    "=",
+    [{ url: { q: '"init"' }; entries: 0; values: { q: "init" }; errors: 1 }]
+  >;
+
+  /** an array with entries: "multiple" is written as repeated entries, and read back from them */
+  export type RepeatsEntries = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          initial: { tags: ["a"] };
+          handlers: { tags: { resolve: typeof text; entries: "multiple" } };
+          steps: [{ set: { tags: ["a", "b"] } }, { navigate: '?tags="c"' }];
+        },
+      ]
+    >,
+    "=",
+    [
+      { url: { tags: '"a"' }; entries: 0; values: { tags: ["a"] }; errors: 0 },
+      {
+        url: { tags: ['"a"', '"b"'] };
+        entries: 1;
+        values: { tags: ["a", "b"] };
+        errors: 0;
+      },
+      { url: { tags: '"c"' }; entries: 2; values: { tags: ["c"] }; errors: 0 },
+    ]
+  >;
+
+  /** a parameter's key is the prefix, then the handler's key or the property's name */
+  export type Keys = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          initial: { query: "init"; page: 1 };
+          handlers: {
+            query: { resolve: typeof text; key: "q" };
+            page: typeof count;
+          };
+          options: { prefix: "app_" };
+        },
+      ]
+    >,
+    "=",
+    [
+      {
+        url: { app_q: '"init"'; app_page: "1" };
+        entries: 0;
+        values: { query: "init"; page: 1 };
+        errors: 0;
+      },
+    ]
+  >;
+
+  /** prefix() moves every parameter at once, without a history entry, and later changes follow */
+  export type MovesPrefix = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          initial: { query: "init"; page: 1 };
+          handlers: {
+            query: { resolve: typeof text; key: "q" };
+            page: typeof count;
+          };
+          options: { prefix: "a_" };
+          steps: [{ prefix: "b_" }, { set: { page: 2 } }];
+        },
+      ]
+    >,
+    "=",
+    [
+      {
+        url: { a_q: '"init"'; a_page: "1" };
+        entries: 0;
+        values: { query: "init"; page: 1 };
+        errors: 0;
+      },
+      {
+        url: { b_q: '"init"'; b_page: "1" };
+        entries: 0;
+        values: { query: "init"; page: 1 };
+        errors: 0;
+      },
+      {
+        url: { b_q: '"init"'; b_page: "2" };
+        entries: 1;
+        values: { query: "init"; page: 2 };
+        errors: 0;
+      },
+    ]
+  >;
+
+  /** a prefix getter is followed as what it reads changes */
+  export type FollowsPrefixGetter = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          initial: { q: "init" };
+          handlers: { q: typeof text };
+          prefixState: "a_";
+          steps: [{ setPrefix: "b_" }];
+        },
+      ]
+    >,
+    "=",
+    [
+      { url: { a_q: '"init"' }; entries: 0; values: { q: "init" }; errors: 0 },
+      { url: { b_q: '"init"' }; entries: 0; values: { q: "init" }; errors: 0 },
+    ]
+  >;
+
+  /** a key can only be tracked once, whether on mount or by moving prefixes */
+  export type Conflicts = [
+    Throws<
+      Invoke<
+        typeof session,
+        [
+          scenario: {
+            beside: [{ initial: { q: "other" }; handlers: { q: typeof text } }];
+            initial: { q: "init" };
+            handlers: { q: typeof text };
+          },
+        ]
+      >,
+      'URL parameter key conflict detected: "q"'
+    >,
+    Throws<
+      Invoke<
+        typeof session,
+        [
+          scenario: {
+            beside: [
+              {
+                initial: { q: "other" };
+                handlers: { q: typeof text };
+                options: { prefix: "b_" };
+              },
+            ];
+            initial: { q: "init" };
+            handlers: { q: typeof text };
+            options: { prefix: "a_" };
+            steps: [{ prefix: "b_" }];
+          },
+        ]
+      >,
+      'URL parameter key conflict detected: "b_q"'
+    >,
   ];
+
+  /** an old key's value is read, and the old key replaced by the new one, without a history entry */
+  export type MigratesKeys = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          url: '?greeting="hi"';
+          initial: { hello: "init" };
+          handlers: {
+            hello: {
+              resolve: typeof text;
+              previousKeys: [{ fullname: "greeting" }];
+            };
+          };
+        },
+      ]
+    >,
+    "=",
+    [{ url: { hello: '"hi"' }; entries: 0; values: { hello: "hi" }; errors: 0 }]
+  >;
+
+  /** debounced changes are written once they pause, as one history entry */
+  export type Debounces = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          initial: { q: "init" };
+          handlers: {
+            q: {
+              resolve: typeof text;
+              debounce: { idleMs: 20; maxWaitMs: 200 };
+            };
+          };
+          steps: [{ set: { q: "a" } }, { set: { q: "ab" } }, { wait: 80 }];
+        },
+      ]
+    >,
+    "=",
+    [
+      { url: { q: '"init"' }; entries: 0; values: { q: "init" }; errors: 0 },
+      { url: { q: '"init"' }; entries: 0; values: { q: "a" }; errors: 0 },
+      { url: { q: '"init"' }; entries: 0; values: { q: "ab" }; errors: 0 },
+      { url: { q: '"ab"' }; entries: 1; values: { q: "ab" }; errors: 0 },
+    ]
+  >;
+
+  /** cleanup removes the parameters, without a history entry, and stops tracking */
+  export type CleansUp = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          initial: { q: "init" };
+          handlers: { q: typeof text };
+          steps: [
+            { cleanup: true },
+            { set: { q: "a" } },
+            { navigate: '?q="b"' },
+          ];
+        },
+      ]
+    >,
+    "=",
+    [
+      { url: { q: '"init"' }; entries: 0; values: { q: "init" }; errors: 0 },
+      { url: {}; entries: 0; values: { q: "init" }; errors: 0 },
+      { url: {}; entries: 0; values: { q: "a" }; errors: 0 },
+      { url: { q: '"b"' }; entries: 1; values: { q: "a" }; errors: 0 },
+    ]
+  >;
+
+  /** objects tracked side by side leave each other alone */
+  export type SideBySide = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          beside: [
+            { initial: { other: "x" }; handlers: { other: typeof text } },
+          ];
+          initial: { q: "init" };
+          handlers: { q: typeof text };
+          steps: [{ set: { q: "a" } }];
+        },
+      ]
+    >,
+    "=",
+    [
+      {
+        url: { other: '"x"'; q: '"init"' };
+        entries: 0;
+        values: { q: "init" };
+        errors: 0;
+      },
+      {
+        url: { other: '"x"'; q: '"a"' };
+        entries: 1;
+        values: { q: "a" };
+        errors: 0;
+      },
+    ]
+  >;
 }
 
 export default Object.assign(URLParameterize, defaults);
