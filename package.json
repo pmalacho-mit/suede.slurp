@@ -1,0 +1,8 @@
+{
+  "name": "suede.slurp",
+  "private": true,
+  "type": "module",
+  "peerDependencies": {
+    "svelte": "^5.0.0"
+  }
+}
