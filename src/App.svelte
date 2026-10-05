@@ -96,6 +96,9 @@
 </script>
 
 <script lang="ts">
+  import type Self from "./App.svelte";
+  import type { Test } from "../suede.sweater-vest/dsl.import.meta.vitest";
+
   const model = new Model();
 
   onDestroy(model.url.cleanup);
@@ -178,3 +181,58 @@
     <input type="text" bind:value={model.nested.b} />
   </div>
 </div> -->
+
+<!-- typing into a tracked field writes it into the URL, under the model's prefix
+     (each value is serialized, then encoded with encodeURIComponent, before it is set) -->
+{#snippet writesToTheURL(App: typeof Self, pocket: { el: HTMLDivElement }, test: Test)}
+  <div bind:this={pocket.el}><App /></div>
+  {test(async ({ expect, user, within }) => {
+    const param = (key: string) =>
+      decodeURIComponent(new URL(location.href).searchParams.get(key)!);
+    expect(param("app_hello")).toBe("world");
+    expect(JSON.parse(param("0_item"))).toEqual({ hello: "world" });
+
+    const [hello, firstItem] = within(pocket.el).getAllByRole("textbox");
+    await user.clear(hello);
+    await user.type(hello, "slurp it");
+    expect(param("app_hello")).toBe("slurp it");
+
+    await user.clear(firstItem);
+    await user.type(firstItem, "nested");
+    expect(JSON.parse(param("0_item"))).toEqual({ hello: "nested" });
+  })}
+{/snippet}
+
+<!-- a change to the URL is read back into the model, and so into the inputs -->
+{#snippet readsFromTheURL(App: typeof Self, pocket: { el: HTMLDivElement }, test: Test)}
+  <div bind:this={pocket.el}><App /></div>
+  {test(async ({ expect, within, flushSync }) => {
+    const [hello, firstItem] = within(pocket.el).getAllByRole("textbox") as HTMLInputElement[];
+    expect(hello.value).toBe("world");
+
+    const url = new URL(location.href);
+    url.searchParams.set("app_hello", encodeURIComponent("from the url"));
+    url.searchParams.set("0_item", encodeURIComponent(JSON.stringify({ hello: "also from the url" })));
+    history.pushState({}, "", url);
+    flushSync();
+
+    expect(hello.value).toBe("from the url");
+    expect(firstItem.value).toBe("also from the url");
+  })}
+{/snippet}
+
+<!-- each edit is a history entry: going back restores the previous value -->
+{#snippet followsHistory(App: typeof Self, pocket: { el: HTMLDivElement }, test: Test)}
+  <div bind:this={pocket.el}><App /></div>
+  {test(async ({ expect, user, within, waitFor }) => {
+    const param = (key: string) =>
+      decodeURIComponent(new URL(location.href).searchParams.get(key)!);
+    const [hello] = within(pocket.el).getAllByRole("textbox") as HTMLInputElement[];
+    await user.type(hello, "!");
+    expect(param("app_hello")).toBe("world!");
+
+    history.back();
+    await waitFor(() => expect(hello.value).toBe("world"));
+    expect(param("app_hello")).toBe("world");
+  })}
+{/snippet}
