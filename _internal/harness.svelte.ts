@@ -40,6 +40,12 @@ export type Step =
   | { set: Record<string, unknown> }
   /** push a URL with this search, as a link or other code would */
   | { navigate: string }
+  /** set `location.hash`, as a `#…` link or someone editing the address bar would, and wait for `hashchange` */
+  | {
+      hash: string;
+      /** false: as a browser that announces it with `hashchange` alone */
+      popstate?: false;
+    }
   /** the browser's back and forward buttons */
   | { back: true }
   | { forward: true }
@@ -53,7 +59,7 @@ export type Step =
   | { cleanup: true };
 
 export type Observation = {
-  /** the URL's search params: one value as a string, repeated ones as an array */
+  /** the URL's parameters, those in the hash keyed with a `#`: one value as a string, repeated ones as an array */
   url: Record<string, string | string[]>;
   /** history entries added since tracking started */
   entries: number;
@@ -63,31 +69,81 @@ export type Observation = {
   errors: number;
 };
 
-const searchParams = () => {
-  const params = new URL(location.href).searchParams;
+const urlParams = () => {
   const url: Observation["url"] = {};
-  for (const key of new Set(params.keys())) {
-    const all = params.getAll(key);
-    url[key] = all.length === 1 ? all[0] : all;
+  const { search, hash } = new URL(location.href);
+  for (const [params, prefix] of [
+    [search, ""],
+    [hash.slice(1), "#"],
+  ] as const) {
+    const parsed = new URLSearchParams(params);
+    for (const key of new Set(parsed.keys())) {
+      const all = parsed.getAll(key);
+      url[prefix + key] = all.length === 1 ? all[0] : all;
+    }
   }
   return url;
 };
 
-const traverse = (direction: "back" | "forward") => {
-  const popped = new Promise((resolve) =>
-    window.addEventListener("popstate", resolve, { once: true }),
-  );
-  history[direction]();
-  return popped;
+/** Resolves on the next `event` on `window` that `accept`s. */
+const next = <E extends Event>(
+  type: string,
+  accept: (event: E) => boolean = () => true,
+) =>
+  new Promise<void>((resolve) => {
+    const listener = (event: Event) => {
+      if (!accept(event as E)) return;
+      window.removeEventListener(type, listener);
+      resolve();
+    };
+    window.addEventListener(type, listener);
+  });
+
+const changeHash = async (hash: string, popstate = true) => {
+  const silence = (event: Event) => event.stopImmediatePropagation();
+  if (!popstate)
+    window.addEventListener("popstate", silence, { capture: true });
+  location.hash = hash;
+  // the hashchange of this change, not one still queued from an earlier one
+  const href = location.href;
+  await next<HashChangeEvent>("hashchange", (event) => event.newURL === href);
+  window.removeEventListener("popstate", silence, { capture: true });
 };
 
+const traverse = async (direction: "back" | "forward") => {
+  const { hash } = location;
+  // crossing a hash change, the browser announces it with hashchange too, as soon as popstate
+  const changed: string[] = [];
+  const record = (event: HashChangeEvent) => void changed.push(event.newURL);
+  window.addEventListener("hashchange", record);
+  const popped = next("popstate");
+  history[direction]();
+  await popped;
+  const href = location.href;
+  if (location.hash !== hash && !changed.includes(href))
+    await next<HashChangeEvent>("hashchange", (event) => event.newURL === href);
+  window.removeEventListener("hashchange", record);
+};
+
+type Tracked = ReturnType<typeof URLParameterize<Record<string, any>>>;
+
 /**
- * Tracks `scenario.initial` with URLParameterize in a URL whose search is
- * `scenario.url`, then plays the steps. Returns what was observed once tracking
- * started, and after each step.
+ * Tracks `scenario.initial` with URLParameterize in a URL whose search (and
+ * hash) is `scenario.url`, then plays the steps. Returns what `observe` saw
+ * once tracking started, and after each step.
  */
-export const session = async (scenario: Scenario): Promise<Observation[]> => {
-  history.replaceState(null, "", `/${scenario.url ?? ""}`);
+const play = async <Seen>(
+  scenario: Scenario,
+  observe: (seen: {
+    target: Record<string, any>;
+    tracked: Tracked;
+    start: number;
+    errors: number;
+  }) => Seen,
+): Promise<Seen[]> => {
+  // pushed, not replaced: it drops any forward entries an earlier session left,
+  // so that history.length counts the entries this one adds
+  history.pushState(null, "", `/${scenario.url ?? ""}`);
   const start = history.length;
   const errors = vi.spyOn(console, "error").mockImplementation(() => {});
   const cleanups: (() => void)[] = [];
@@ -115,21 +171,24 @@ export const session = async (scenario: Scenario): Promise<Observation[]> => {
         : { ...scenario.options, prefix: () => prefix },
   });
 
-  const observe = (): Observation => {
+  const look = () => {
     flushSync();
-    return {
-      url: searchParams(),
-      entries: history.length - start,
-      values: $state.snapshot(target),
+    return observe({
+      target,
+      tracked,
+      start,
       errors: errors.mock.calls.length,
-    };
+    });
   };
 
-  const observations = [observe()];
+  const observations = [look()];
   for (const step of scenario.steps ?? []) {
+    // each step a separate action, as a click or a keystroke is: in a tick of its own
+    await Promise.resolve();
     if ("set" in step) Object.assign(target, step.set);
     else if ("navigate" in step)
       history.pushState({}, "", step.navigate || "?");
+    else if ("hash" in step) await changeHash(step.hash, step.popstate);
     else if ("back" in step) await traverse("back");
     else if ("forward" in step) await traverse("forward");
     else if ("wait" in step)
@@ -137,9 +196,47 @@ export const session = async (scenario: Scenario): Promise<Observation[]> => {
     else if ("prefix" in step) tracked.prefix(step.prefix);
     else if ("setPrefix" in step) prefix = step.setPrefix;
     else tracked.cleanup();
-    observations.push(observe());
+    observations.push(look());
   }
   return observations;
+};
+
+/** What the URL, the history and the tracked object were, once tracking started and after each step. */
+export const session = (scenario: Scenario) =>
+  play(
+    scenario,
+    ({ target, start, errors }): Observation => ({
+      url: urlParams(),
+      entries: history.length - start,
+      values: $state.snapshot(target),
+      errors,
+    }),
+  );
+
+/** What `key` returned for each tracked property, once tracking started and after each step. */
+export const keys = (scenario: Scenario) => {
+  // Read through a $derived, as markup would: it only updates if key is reactive.
+  let seen: { readonly current: Record<string, string> } | undefined;
+  return play(scenario, ({ tracked }) => {
+    seen ??= derived(() =>
+      Object.fromEntries(
+        Object.keys(scenario.handlers).map((property) => [
+          property,
+          tracked.key(property),
+        ]),
+      ),
+    );
+    return seen.current;
+  });
+};
+
+const derived = <T>(compute: () => T) => {
+  const value = $derived(compute());
+  return {
+    get current() {
+      return value;
+    },
+  };
 };
 
 export type TimelineStep =
@@ -181,3 +278,6 @@ export const timeline = (config: Config, steps: TimelineStep[]): Flush[] => {
   debouncer.dispose();
   return flushes;
 };
+
+export const getter = () => "from getter" as const;
+export const undefinedGetter = () => undefined;

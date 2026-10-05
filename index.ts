@@ -8,7 +8,8 @@ import type {
 } from "./URLParameterize.svelte";
 
 export namespace URLParameterize {
-  export type Return = URLParameterizeReturn;
+  export type Return<Property extends string = string> =
+    URLParameterizeReturn<Property>;
 
   /**
    * Defines parameter handlers for all properties of type T.
