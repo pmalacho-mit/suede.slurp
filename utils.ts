@@ -1,4 +1,7 @@
-import type { Expect, Invoke } from "../suede.nests.slurp/dsl.import.meta.vitest.ts";
+import type {
+  Expect,
+  Invoke,
+} from "../suede.nests.slurp/dsl.import.meta.vitest.ts";
 
 export const isBrowser = typeof window !== "undefined";
 
@@ -46,7 +49,11 @@ declare namespace resolve {
   export type Value = Expect<Invoke<typeof resolve, [value: 3]>, "=", 3>;
 
   /** a getter is called, and its result returned */
-  export type Getter = Expect<Invoke<typeof resolve, [value: typeof getter]>, "=", "from getter">;
+  export type Getter = Expect<
+    Invoke<typeof resolve, [value: typeof getter]>,
+    "=",
+    "from getter"
+  >;
 
   /** an undefined value falls back */
   export type UndefinedFallsBack = Expect<
@@ -57,19 +64,29 @@ declare namespace resolve {
 
   /** a getter that returns undefined falls back */
   export type UndefinedGetterFallsBack = Expect<
-    Invoke<typeof resolve, [value: typeof undefinedGetter, fallback: "fallback"]>,
+    Invoke<
+      typeof resolve,
+      [value: typeof undefinedGetter, fallback: "fallback"]
+    >,
     "=",
     "fallback"
   >;
 
   /** only undefined falls back: other falsy values are kept */
   export type FalsyKept = [
-    Expect<Invoke<typeof resolve, [value: null, fallback: "fallback"]>, "=", null>,
+    Expect<
+      Invoke<typeof resolve, [value: null, fallback: "fallback"]>,
+      "=",
+      null
+    >,
     Expect<Invoke<typeof resolve, [value: 0, fallback: 1]>, "=", 0>,
     Expect<Invoke<typeof resolve, [value: "", fallback: "fallback"]>, "=", "">,
     Expect<Invoke<typeof resolve, [value: false, fallback: true]>, "=", false>,
   ];
 
   /** with nothing to fall back to, undefined stays undefined */
-  export type NoFallback = Expect<Invoke<typeof resolve, [value: undefined]>, "undefined">;
+  export type NoFallback = Expect<
+    Invoke<typeof resolve, [value: undefined]>,
+    "undefined"
+  >;
 }

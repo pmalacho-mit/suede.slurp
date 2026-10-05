@@ -1,4 +1,9 @@
-import type { Construct, Expect, Invoke, Throws } from "../suede.nests.slurp/dsl.import.meta.vitest.ts";
+import type {
+  Construct,
+  Expect,
+  Invoke,
+  Throws,
+} from "../suede.nests.slurp/dsl.import.meta.vitest.ts";
 
 export type Config = { idleMs: number; maxWaitMs: number };
 
@@ -67,13 +72,19 @@ export class MappedDebouncer<T> {
 declare namespace MappedDebouncer {
   /** maxWaitMs may equal idleMs */
   export type AcceptsEqualWaits = Expect<
-    Invoke<typeof MappedDebouncer.ValidateConfig, [config: { idleMs: 100; maxWaitMs: 100 }]>,
+    Invoke<
+      typeof MappedDebouncer.ValidateConfig,
+      [config: { idleMs: 100; maxWaitMs: 100 }]
+    >,
     "undefined"
   >;
 
   /** maxWaitMs may not be shorter than idleMs */
   export type RejectsShorterMaxWait = Throws<
-    Invoke<typeof MappedDebouncer.ValidateConfig, [config: { idleMs: 100; maxWaitMs: 50 }]>,
+    Invoke<
+      typeof MappedDebouncer.ValidateConfig,
+      [config: { idleMs: 100; maxWaitMs: 50 }]
+    >,
     "maxWaitMs must be greater than or equal to idleMs"
   >;
 
