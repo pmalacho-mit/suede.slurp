@@ -1,0 +1,383 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import picomatch from "picomatch";
+
+import {
+  analyze,
+  hasTest,
+  isGeneratable,
+  MARKER,
+  type Analysis,
+  type Warning,
+} from "./analyze.ts";
+import { scrub } from "./scrub.ts";
+import { generate } from "./generate.ts";
+import { pocketValues } from "./pocket-values.ts";
+import { writeDiagnostics } from "./derived.ts";
+import {
+  EXTRACTED_SUFFIX,
+  GENERATED_SUFFIX,
+  generatedId,
+  importPath,
+  parseGeneratedId,
+  posix,
+  testName,
+} from "./names.ts";
+import { CONFIG_ENDPOINT, TESTS_ENDPOINT } from "../endpoints.ts";
+import { routeHider, type Alias } from "./routes.ts";
+import { DEFAULT_PROJECT, project as vestProject } from "./project.ts";
+
+export {
+  DEFAULT_PROJECT,
+  type SweaterVestProject,
+  type ProjectOptions,
+  type Environment,
+} from "./project.ts";
+
+import type { Plugin, ViteUserConfig } from "vitest/config";
+
+export type Options = {
+  /**
+   * Vitest project name(s) that collect components. Default `"sweater-vest"`, the
+   * name `sweaterVest.project()` gives its project; a config with no projects collects in itself.
+   */
+  project?: string | string[];
+  /** Globs discovery skips, relative to the project root. `node_modules` and dot-directories are always skipped. */
+  exclude?: string[];
+  /** Glob for extracted tests, added to Vitest's `include`. `false` leaves them out. */
+  extracted?: string | false;
+  /** The tsconfig file name, found upward from the working directory. */
+  tsconfig?: string;
+  /** Discover components with tests by scanning the working directory. */
+  scan?: boolean;
+  /**
+   * Where a browser outside this machine reaches the dev server — a container's
+   * published port, say `http://localhost:8084` — for the editor to open pages at.
+   * Left out, the editor tunnels to the server's own port.
+   */
+  external?: string;
+  /**
+   * SvelteKit's routes directory. In a build, a route whose `+` files import
+   * from the library (the pages that render snippets) is left out: its files
+   * are renamed for the length of the build and restored after.
+   */
+  routes?: string;
+  /**
+   * Also discover the library's own components (their snippets test and document them) and
+   * fixtures, which vendoring it must not add to a suite. Its development repository sets it.
+   */
+  _scanSelf?: boolean;
+};
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const library = path.resolve(here, "..");
+const runtimes = path.join(library, "runtimes");
+/** What generated components import; under Vitest, resolved to `runtimes/vitest.ts` beside it. */
+export const runtimeFile = path.join(runtimes, "common.svelte.ts");
+const vitestFile = path.join(runtimes, "vitest.ts");
+/** The components a snippet takes as `typeof Sweater.<Component>`. */
+export const componentsFile = path.join(library, "components", "index.ts");
+
+const VITEST_DEFAULT_INCLUDE = ["**/*.{test,spec}.?(c|m)[jt]s?(x)"];
+
+// Testing Library's Svelte package holds `.svelte.js` modules that need compiling, so Vitest
+// must run it through Vite rather than load it as an external — wherever it is installed
+const SVELTE_LIBRARIES = [/@testing-library\/svelte(-core)?/];
+
+// Vite appends a plugin's `include` to the user's, so it replaces only Vitest's default;
+// a project whose `include` is empty collects components alone, and extracted tests with them
+const includeFor = (extracted: string | false, userInclude: unknown) => {
+  if (!extracted) return {};
+  return {
+    include: userInclude ? [extracted] : [...VITEST_DEFAULT_INCLUDE, extracted],
+  };
+};
+
+const isComponent = (file: string) =>
+  file.endsWith(".svelte") &&
+  !file.endsWith(GENERATED_SUFFIX) &&
+  !file.endsWith(EXTRACTED_SUFFIX);
+
+const isHidden = (entry: fs.Dirent) =>
+  entry.name === "node_modules" || entry.name.startsWith(".");
+
+const asDirectories = (globs: string[]) =>
+  globs.map((glob) => glob.replace(/\/\*\*(\/\*)?$/, ""));
+
+function componentFinder(cwd: string, exclude: string[], skip: string | null) {
+  const excluded = picomatch(exclude, { dot: true });
+  const excludedDir = picomatch(asDirectories(exclude), { dot: true });
+  const rel = (file: string) => posix(path.relative(cwd, file));
+  const holdsTests = (file: string) =>
+    isComponent(file) &&
+    !excluded(rel(file)) &&
+    fs.readFileSync(file, "utf8").includes(MARKER);
+
+  function* under(dir: string): Generator<string> {
+    if (path.resolve(dir) === skip) return;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (isHidden(entry)) continue;
+      const at = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (!excludedDir(rel(at))) yield* under(at);
+      } else if (holdsTests(at)) yield at;
+    }
+  }
+  return under;
+}
+
+export const collectorFor = (file: string, ids: string[]) =>
+  [
+    `// ───────── generated by sweater-vest; not part of your build ─────────`,
+    `if (import.meta.vitest) {`,
+    ...ids.map(
+      (id) => `  await import(${JSON.stringify(importPath(file, id))});`,
+    ),
+    `}`,
+  ].join("\n");
+
+const withoutQuery = (id: string) => id.split("?")[0] ?? id;
+
+const asList = (value: string | string[] | undefined) =>
+  value === undefined ? undefined : Array.isArray(value) ? value : [value];
+
+function sweaterVest({
+  project = DEFAULT_PROJECT,
+  exclude = [],
+  extracted = `**/*${EXTRACTED_SUFFIX}`,
+  tsconfig = "tsconfig.json",
+  scan = true,
+  external,
+  routes = "src/routes",
+  _scanSelf: scanSelf = false,
+}: Options = {}): Plugin {
+  const cwd = process.cwd();
+  const hider = routeHider(path.resolve(cwd, routes), library, (message) =>
+    console.log(`[sweater-vest] ${message}`),
+  );
+  const projects = asList(project);
+  const componentsUnder = componentFinder(
+    cwd,
+    exclude,
+    scanSelf ? null : library,
+  );
+  const values = pocketValues(cwd, tsconfig);
+  const analyses = new Map<string, Analysis>();
+  const diagnostics: Record<string, Warning[]> = {};
+  let vitest = false;
+  let root = cwd;
+
+  const analysisFor = (file: string, code = fs.readFileSync(file, "utf8")) => {
+    const cached = analyses.get(file);
+    if (cached && cached.source === code) return cached;
+    const analysis = analyze(file, code);
+    analyses.set(file, analysis);
+    return analysis;
+  };
+
+  // written for the editor first, then said; an error stops the run, so a test is never skipped quietly
+  const report = (
+    analysis: Analysis,
+    context: { warn(message: string): void; error(message: string): never },
+  ) => {
+    const rel = path.relative(cwd, analysis.file);
+    // absolute: projects in subdirectories share one library, so no single root resolves them all
+    diagnostics[analysis.file] = analysis.warnings;
+    writeDiagnostics(diagnostics);
+    const where = (w: Warning) =>
+      `${rel}:${w.line + 1}:${w.column + 1} ${w.message}`;
+    for (const w of analysis.warnings)
+      if (w.severity === "warning") context.warn(where(w));
+    const errors = analysis.warnings.filter((w) => w.severity === "error");
+    if (errors.length) context.error(errors.map(where).join("\n"));
+  };
+
+  // a generated id names a component that exists, under a candidate spelling of the path
+  const originOf = (source: string, importer: string | undefined) => {
+    const candidates = [
+      ...(path.isAbsolute(source) ? [source, path.join(root, source)] : []),
+      ...(source.startsWith(".") && importer
+        ? [path.resolve(path.dirname(importer), source)]
+        : []),
+    ];
+    for (const candidate of candidates) {
+      const origin = parseGeneratedId(candidate);
+      if (origin && fs.existsSync(origin.file))
+        return { id: candidate, ...origin };
+    }
+    return null;
+  };
+
+  /** Every generatable snippet in the project, as the pages and the report see it: a `VestEntry[]`. */
+  const entries = () =>
+    [...componentsUnder(cwd)].flatMap((file) =>
+      analysisFor(file)
+        .snippets.filter(isGeneratable)
+        .map((s) => ({
+          file: posix(path.relative(cwd, file)),
+          snippet: s.name,
+          name: testName(file, s.name),
+          line: s.line,
+          test: hasTest(s),
+          key: `${posix(path.relative(cwd, file)).replace(/\.svelte$/, "")}/${s.name}`,
+          // the generated component, as a page imports it from the dev server
+          url: `/${posix(path.relative(root, generatedId(file, s.name)))}`,
+        })),
+    );
+
+  /** What the plugin adds to Vitest's config, for the projects it collects in. */
+  const testConfig = (userConfig: ViteUserConfig): ViteUserConfig => {
+    const name = userConfig.test?.name;
+    // a named project collects when its name is one of ours; unnamed, the root of a config with
+    // projects runs nothing itself (a project that extends it inherits `projects` too, but has a name),
+    // and a config with no projects is the one project there is
+    if (
+      typeof name === "string"
+        ? !projects!.includes(name)
+        : !!userConfig.test?.projects
+    )
+      return {};
+    // every component with a snippet is collected — an example is a test of mounting — and one the
+    // plugin cannot generate still counts, so that its error fails the run instead of hiding it
+    const files = scan
+      ? [...componentsUnder(cwd)]
+          .filter((f) => analysisFor(f).snippets.length > 0)
+          .map((f) => posix(path.relative(cwd, f)))
+      : [];
+    return {
+      test: {
+        includeSource: files,
+        includeTaskLocation: true,
+        server: { deps: { inline: SVELTE_LIBRARIES } },
+        ...includeFor(extracted, userConfig.test?.include),
+      },
+    };
+  };
+
+  return {
+    name: "sweater-vest",
+    enforce: "pre",
+
+    // before SvelteKit's own `config`, which scans the routes: ours is enforced first and ordered first
+    config: {
+      order: "pre",
+      handler(
+        userConfig: ViteUserConfig,
+        env: { command: string },
+      ): ViteUserConfig {
+        if (env.command === "build")
+          hider.hide(userConfig.resolve?.alias as Alias | undefined);
+        return testConfig(userConfig);
+      },
+    },
+
+    configResolved(config) {
+      root = config.root;
+      vitest = config.mode === "test" || process.env.VITEST === "true";
+    },
+
+    resolveId(source, importer) {
+      const asked = withoutQuery(source);
+      // `vitest.ts` itself imports the runtime, and must get the real one
+      if (
+        vitest &&
+        importer &&
+        importer !== vitestFile &&
+        asked.startsWith(".") &&
+        path.resolve(path.dirname(importer), asked) === runtimeFile
+      )
+        return vitestFile;
+      if (!asked.endsWith(GENERATED_SUFFIX)) return null;
+      const origin = originOf(asked, importer);
+      return origin ? origin.id : null;
+    },
+
+    load(id) {
+      const origin = parseGeneratedId(withoutQuery(id));
+      if (!origin || !fs.existsSync(origin.file)) return null;
+      const analysis = analysisFor(origin.file);
+      const snippet = analysis.snippets.find((s) => s.name === origin.snippet);
+      if (!snippet || !isGeneratable(snippet)) return null;
+      const { code, map } = generate(analysis, snippet, {
+        runtime: runtimeFile,
+        components: componentsFile,
+        pockets: values.forSnippet(analysis, snippet),
+      });
+      return { code, map };
+    },
+
+    transform(code, rawId) {
+      const id = withoutQuery(rawId);
+      if (!isComponent(id) || !code.includes(MARKER)) return null;
+      const analysis = analysisFor(id, code);
+      report(analysis, this);
+      if (!analysis.snippets.length) return null;
+      const ids = analysis.snippets
+        .filter(isGeneratable)
+        .map((s) => generatedId(id, s.name));
+      return scrub(
+        analysis,
+        vitest && ids.length ? collectorFor(id, ids) : null,
+      );
+    },
+
+    configureServer(server) {
+      const json = (route: string, body: () => unknown) =>
+        server.middlewares.use(route, (_request, response) => {
+          response.setHeader("Content-Type", "application/json");
+          response.end(JSON.stringify(body()));
+        });
+      // the report asks here for what to open; the editor, for where to open it
+      json(TESTS_ENDPOINT, entries);
+      json(CONFIG_ENDPOINT, () => ({
+        external: external?.replace(/\/$/, "") ?? null,
+      }));
+    },
+
+    watchChange(id) {
+      analyses.delete(id);
+      values.changed(id);
+    },
+
+    hotUpdate({ file, server }) {
+      if (!file.endsWith(".svelte")) return;
+      const stale = [
+        ...server.environments.client.moduleGraph.idToModuleMap.values(),
+      ].filter((m) => m.id && parseGeneratedId(m.id)?.file === file);
+      for (const mod of stale)
+        if (mod) server.environments.client.moduleGraph.invalidateModule(mod);
+    },
+  };
+}
+
+import type {
+  Expect,
+  Invoke,
+} from "../../suede.nests.sweater-vest/dsl.import.meta.vitest.ts";
+
+declare namespace collectorFor {
+  /** one import per generated test, relative to the component, behind Vitest's guard */
+  export type Block = Expect<
+    Invoke<
+      typeof collectorFor,
+      [
+        "/p/src/A.svelte",
+        ["/p/src/A.one.vest.svelte", "/p/src/A.two.vest.svelte"],
+      ]
+    >,
+    "=",
+    '// ───────── generated by sweater-vest; not part of your build ─────────\nif (import.meta.vitest) {\n  await import("./A.one.vest.svelte");\n  await import("./A.two.vest.svelte");\n}'
+  >;
+}
+
+/**
+ * The Vite plugin, with `sweaterVest.project()`: the Vitest project its tests run in.
+ *
+ * ```ts
+ * plugins: [sveltekit(), sweaterVest()],
+ * test: { projects: [sweaterVest.project()] },
+ * ```
+ */
+export default Object.assign(sweaterVest, { project: vestProject });
+export { vestProject as project };

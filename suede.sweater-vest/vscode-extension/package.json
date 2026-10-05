@@ -1,0 +1,196 @@
+{
+  "name": "sweater-vest",
+  "displayName": "Sweater Vest",
+  "description": "Svelte component tests written as snippets, run from the line you wrote them on.",
+  "version": "0.1.0",
+  "publisher": "pmalacho-mit",
+  "engines": {
+    "vscode": "^1.88.0"
+  },
+  "categories": [
+    "Testing"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onLanguage:svelte"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "sweater-vest.runTest",
+        "title": "Sweater Vest: Run Test"
+      },
+      {
+        "command": "sweater-vest.showFailure",
+        "title": "Sweater Vest: Show Failure"
+      },
+      {
+        "command": "sweater-vest.showProblem",
+        "title": "Sweater Vest: Show Problem"
+      },
+      {
+        "command": "sweater-vest.extract",
+        "title": "Sweater Vest: Extract Test to a File"
+      },
+      {
+        "command": "sweater-vest.openPage",
+        "title": "Sweater Vest: Open on the Dev Server"
+      },
+      {
+        "command": "sweater-vest.showCollector",
+        "title": "Sweater Vest: Show What Vitest Sees"
+      },
+      {
+        "command": "sweater-vest.openAllPages",
+        "title": "Sweater Vest: Open All Pages of This Component"
+      },
+      {
+        "command": "sweater-vest.showDocumentation",
+        "title": "Sweater Vest: Show This Component's Snippets as Documentation"
+      },
+      {
+        "command": "sweater-vest.runExtracted",
+        "title": "Sweater Vest: Run Extracted Test"
+      },
+      {
+        "command": "sweater-vest.debugExtracted",
+        "title": "Sweater Vest: Debug Extracted Test"
+      },
+      {
+        "command": "sweater-vest.deleteExtracted",
+        "title": "Sweater Vest: Delete Extracted Test"
+      },
+      {
+        "command": "sweater-vest.markdownExtracted",
+        "title": "Sweater Vest: Show Extracted Test as Markdown"
+      }
+    ],
+    "menus": {
+      "testing/item/context": [
+        {
+          "command": "sweater-vest.extract",
+          "group": "inline"
+        },
+        {
+          "command": "sweater-vest.openPage",
+          "group": "inline"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "sweater-vest.runExtracted",
+          "when": "resourceFilename =~ /\\.vest\\.temp\\.svelte$/"
+        },
+        {
+          "command": "sweater-vest.debugExtracted",
+          "when": "resourceFilename =~ /\\.vest\\.temp\\.svelte$/"
+        },
+        {
+          "command": "sweater-vest.deleteExtracted",
+          "when": "resourceFilename =~ /\\.vest\\.temp\\.svelte$/"
+        },
+        {
+          "command": "sweater-vest.runTest",
+          "when": "false"
+        },
+        {
+          "command": "sweater-vest.showFailure",
+          "when": "false"
+        },
+        {
+          "command": "sweater-vest.showCollector",
+          "when": "editorLangId == svelte"
+        },
+        {
+          "command": "sweater-vest.openAllPages",
+          "when": "editorLangId == svelte"
+        },
+        {
+          "command": "sweater-vest.showDocumentation",
+          "when": "editorLangId == svelte"
+        },
+        {
+          "command": "sweater-vest.showProblem",
+          "when": "false"
+        },
+        {
+          "command": "sweater-vest.markdownExtracted",
+          "when": "resourceFilename =~ /\\\\.vest\\\\.temp\\\\.svelte$/"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Sweater Vest",
+      "properties": {
+        "sweater-vest.autoRun": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run a component's tests when it is opened in a tab, or saved while open in one. A component another extension loads without a tab (a formatter, say) is listed but not run."
+        },
+        "sweater-vest.devServer": {
+          "type": "string",
+          "default": "http://localhost:5173",
+          "description": "Where the extension host reaches the dev server. Where a page is opened comes from the server itself: the plugin's `external` option, when set, else this address through the editor's tunnel."
+        },
+        "sweater-vest.pagesRoute": {
+          "type": "string",
+          "default": "/vests",
+          "description": "The route under which the dev server renders each snippet on its own page."
+        },
+        "sweater-vest.cliCommand": {
+          "type": "string",
+          "default": "",
+          "description": "Command that runs the library's cli.ts. Empty means find the library in the workspace and run it with Node."
+        },
+        "sweater-vest.openIn": {
+          "type": "string",
+          "enum": [
+            "webview",
+            "browser"
+          ],
+          "default": "webview",
+          "enumDescriptions": [
+            "A panel beside the editor, reached through the editor's own tunnel to the extension host \u2014 so a container's remapped ports do not matter.",
+            "The system browser, at the address the editor's port forwarding resolves."
+          ],
+          "description": "Where \"Open page\" shows a snippet."
+        },
+        "sweater-vest.openAllLayout": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "gallery",
+            "tabs",
+            "galleryWindow",
+            "tabsWindow"
+          ],
+          "default": "ask",
+          "enumDescriptions": [
+            "Pick each time, with the last pick offered first.",
+            "One tab, every page stacked in a frame of its own.",
+            "A new tab group beside the editor, a tab per page.",
+            "The gallery, in a new window (desktop editors only).",
+            "The tab group, in a new window (desktop editors only)."
+          ],
+          "description": "How \"Open all pages\" lays out a component's pages. With `openIn: \"browser\"`, each page opens in the browser instead."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "install-extension": "node install.mjs"
+  },
+  "devDependencies": {
+    "@types/vscode": "~1.88.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.0"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Runs your tests and the library's command line, and parses with your project's own Svelte compiler."
+    }
+  }
+}

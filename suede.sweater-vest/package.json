@@ -1,0 +1,50 @@
+{
+  "name": "sweater-vest-suede",
+  "private": true,
+  "type": "module",
+  "description": "Svelte component tests written as snippets beside the components they test, run by Vitest and erased from builds.",
+  "workspaces": [
+    "vscode-extension",
+    "../suede.nests.sweater-vest",
+    "../suede.nests.sweater-vest/vscode-extension"
+  ],
+  "scripts": {
+    "report": "node report/index.ts",
+    "clean-extracted": "node cli.ts --clean-extracted",
+    "build-extension": "npm --prefix vscode-extension run build",
+    "install-extension": "npm --prefix vscode-extension run install-extension",
+    "install-typescript-extension": "npm --prefix ../suede.nests.sweater-vest/vscode-extension run install-extension",
+    "install-extensions": "npm run install-extension && npm run install-typescript-extension"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "@types/picomatch": "^4.0.3"
+  },
+  "dependencies": {
+    "@jridgewell/sourcemap-codec": "^1.6.0",
+    "@testing-library/svelte": "^5.4.2",
+    "@testing-library/user-event": "^14.6.7",
+    "@typescript/typescript6": "^6.0.2",
+    "@vitest/expect": "^5.0.3",
+    "chai": "^6.2.1",
+    "magic-string": "^1.4.2",
+    "picomatch": "^4.0.7",
+    "playwright": "^1.63.0"
+  },
+  "peerDependencies": {
+    "jsdom": ">=26",
+    "svelte": "^5.43.5",
+    "vite": "^7.0.0",
+    "vitest": "^4.0.5 || ^5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "jsdom": {
+      "optional": true
+    }
+  },
+  "imports": {
+    "#namespace-tests/*": {
+      "default": "../sweater-vest-suede.typescript-namespace-tests-suede/*"
+    }
+  }
+}
