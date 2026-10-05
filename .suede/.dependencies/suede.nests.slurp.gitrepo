@@ -1,0 +1,6 @@
+; A suede dependency record, written by extract. Do not edit by hand.
+; deps.sh recreates ../suede.nests.slurp beside this dependency wherever it is installed.
+[subrepo]
+	remote = https://github.com/pmalacho-mit/suede.nests
+	branch = release
+	commit = c87027d4a6e5b24ef3bd9d1bbd73f640871e5d49
