@@ -4,9 +4,9 @@
 ; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
 ;
 [subrepo]
-	remote = https://github.com/pmalacho-mit/suede.slurp.git
-	branch = release
-	commit = 3c620f8fa92050a0cc482c071b37a446b6e59429
-	parent = d6ffa396f4b63f3663b05a6c0dbe11cb13cc0717
+	remote = https://github.com/pmalacho-mit/suede.git
+	branch = dependency/release/workflows
+	commit = 8d0fe504f17bd8216722e66b28220cdcfa1d507f
+	parent = 9273b7bb55383520574b0e52dc4a5bc52408c1e1
 	method = merge
 	cmdver = 0.4.9
