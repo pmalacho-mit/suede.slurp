@@ -21,7 +21,8 @@ export const timeline = (config: Config, steps: Step[]): Flush[] => {
     vi.stubGlobal(
       "window",
       Object.assign(new EventTarget(), {
-        setTimeout: (handler: () => void, ms: number) => setTimeout(handler, ms),
+        setTimeout: (handler: () => void, ms: number) =>
+          setTimeout(handler, ms),
       }),
     );
   onTestFinished(() => {

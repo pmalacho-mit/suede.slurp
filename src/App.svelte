@@ -33,7 +33,7 @@
         {
           onDestroy,
           prefix: () => `${index}_`,
-        }
+        },
       );
     }
   }
@@ -90,7 +90,7 @@
       },
       {
         prefix: () => prefix,
-      }
+      },
     );
   }
 </script>
@@ -184,7 +184,11 @@
 
 <!-- typing into a tracked field writes it into the URL, under the model's prefix
      (each value is serialized, then encoded with encodeURIComponent, before it is set) -->
-{#snippet writesToTheURL(App: typeof Self, pocket: { el: HTMLDivElement }, test: Test)}
+{#snippet writesToTheURL(
+  App: typeof Self,
+  pocket: { el: HTMLDivElement },
+  test: Test,
+)}
   <div bind:this={pocket.el}><App /></div>
   {test(async ({ expect, user, within }) => {
     const param = (key: string) =>
@@ -204,15 +208,24 @@
 {/snippet}
 
 <!-- a change to the URL is read back into the model, and so into the inputs -->
-{#snippet readsFromTheURL(App: typeof Self, pocket: { el: HTMLDivElement }, test: Test)}
+{#snippet readsFromTheURL(
+  App: typeof Self,
+  pocket: { el: HTMLDivElement },
+  test: Test,
+)}
   <div bind:this={pocket.el}><App /></div>
   {test(async ({ expect, within, flushSync }) => {
-    const [hello, firstItem] = within(pocket.el).getAllByRole("textbox") as HTMLInputElement[];
+    const [hello, firstItem] = within(pocket.el).getAllByRole(
+      "textbox",
+    ) as HTMLInputElement[];
     expect(hello.value).toBe("world");
 
     const url = new URL(location.href);
     url.searchParams.set("app_hello", encodeURIComponent("from the url"));
-    url.searchParams.set("0_item", encodeURIComponent(JSON.stringify({ hello: "also from the url" })));
+    url.searchParams.set(
+      "0_item",
+      encodeURIComponent(JSON.stringify({ hello: "also from the url" })),
+    );
     history.pushState({}, "", url);
     flushSync();
 
@@ -222,12 +235,18 @@
 {/snippet}
 
 <!-- each edit is a history entry: going back restores the previous value -->
-{#snippet followsHistory(App: typeof Self, pocket: { el: HTMLDivElement }, test: Test)}
+{#snippet followsHistory(
+  App: typeof Self,
+  pocket: { el: HTMLDivElement },
+  test: Test,
+)}
   <div bind:this={pocket.el}><App /></div>
   {test(async ({ expect, user, within, waitFor }) => {
     const param = (key: string) =>
       decodeURIComponent(new URL(location.href).searchParams.get(key)!);
-    const [hello] = within(pocket.el).getAllByRole("textbox") as HTMLInputElement[];
+    const [hello] = within(pocket.el).getAllByRole(
+      "textbox",
+    ) as HTMLInputElement[];
     await user.type(hello, "!");
     expect(param("app_hello")).toBe("world!");
 

@@ -1,4 +1,8 @@
-import type { Expect, Invoke, Throws } from "../suede.nests/dsl.import.meta.vitest.ts";
+import type {
+  Expect,
+  Invoke,
+  Throws,
+} from "../suede.nests/dsl.import.meta.vitest.ts";
 import type { timeline } from "./debounce.harness.ts";
 
 // release/debounce.ts's timing, which needs a harness (fake timers, a `window`),
@@ -6,7 +10,13 @@ import type { timeline } from "./debounce.harness.ts";
 declare namespace MappedDebouncer {
   /** a single enqueue runs once idleMs have passed */
   export type FlushesWhenIdle = Expect<
-    Invoke<typeof timeline, [config: { idleMs: 100; maxWaitMs: 1000 }, steps: [{ at: 0; enqueue: "a" }]]>,
+    Invoke<
+      typeof timeline,
+      [
+        config: { idleMs: 100; maxWaitMs: 1000 },
+        steps: [{ at: 0; enqueue: "a" }],
+      ]
+    >,
     "=",
     [{ at: 100; key: "a"; step: 0 }]
   >;
@@ -17,7 +27,11 @@ declare namespace MappedDebouncer {
       typeof timeline,
       [
         config: { idleMs: 100; maxWaitMs: 1000 },
-        steps: [{ at: 0; enqueue: "a" }, { at: 50; enqueue: "a" }, { at: 120; enqueue: "a" }],
+        steps: [
+          { at: 0; enqueue: "a" },
+          { at: 50; enqueue: "a" },
+          { at: 120; enqueue: "a" },
+        ],
       ]
     >,
     "=",
@@ -39,10 +53,7 @@ declare namespace MappedDebouncer {
       ]
     >,
     "=",
-    [
-      { at: 150; key: "a"; step: 2 },
-      { at: 280; key: "a"; step: 3 },
-    ]
+    [{ at: 150; key: "a"; step: 2 }, { at: 280; key: "a"; step: 3 }]
   >;
 
   /** keys are debounced independently */
@@ -51,14 +62,15 @@ declare namespace MappedDebouncer {
       typeof timeline,
       [
         config: { idleMs: 100; maxWaitMs: 1000 },
-        steps: [{ at: 0; enqueue: "a" }, { at: 50; enqueue: "b" }, { at: 90; enqueue: "a" }],
+        steps: [
+          { at: 0; enqueue: "a" },
+          { at: 50; enqueue: "b" },
+          { at: 90; enqueue: "a" },
+        ],
       ]
     >,
     "=",
-    [
-      { at: 150; key: "b"; step: 1 },
-      { at: 190; key: "a"; step: 2 },
-    ]
+    [{ at: 150; key: "b"; step: 1 }, { at: 190; key: "a"; step: 2 }]
   >;
 
   /** an enqueue's own config overrides the debouncer's */
@@ -80,7 +92,9 @@ declare namespace MappedDebouncer {
       typeof timeline,
       [
         config: { idleMs: 100; maxWaitMs: 1000 },
-        steps: [{ at: 0; enqueue: "a"; config: { idleMs: 100; maxWaitMs: 50 } }],
+        steps: [
+          { at: 0; enqueue: "a"; config: { idleMs: 100; maxWaitMs: 50 } },
+        ],
       ]
     >,
     "maxWaitMs must be greater than or equal to idleMs"
@@ -90,7 +104,10 @@ declare namespace MappedDebouncer {
   export type ClearCancels = Expect<
     Invoke<
       typeof timeline,
-      [config: { idleMs: 100; maxWaitMs: 1000 }, steps: [{ at: 0; enqueue: "a" }, { at: 50; clear: "a" }]]
+      [
+        config: { idleMs: 100; maxWaitMs: 1000 },
+        steps: [{ at: 0; enqueue: "a" }, { at: 50; clear: "a" }],
+      ]
     >,
     "isEmpty"
   >;
@@ -102,21 +119,25 @@ declare namespace MappedDebouncer {
         typeof timeline,
         [
           config: { idleMs: 100; maxWaitMs: 1000 },
-          steps: [{ at: 0; enqueue: "a" }, { at: 10; enqueue: "b" }, { at: 30; dispatch: "pagehide" }],
+          steps: [
+            { at: 0; enqueue: "a" },
+            { at: 10; enqueue: "b" },
+            { at: 30; dispatch: "pagehide" },
+          ],
         ]
       >,
       "=",
-      [
-        { at: 30; key: "a"; step: 0 },
-        { at: 30; key: "b"; step: 1 },
-      ]
+      [{ at: 30; key: "a"; step: 0 }, { at: 30; key: "b"; step: 1 }]
     >,
     Expect<
       Invoke<
         typeof timeline,
         [
           config: { idleMs: 100; maxWaitMs: 1000 },
-          steps: [{ at: 0; enqueue: "a" }, { at: 30; dispatch: "visibilitychange" }],
+          steps: [
+            { at: 0; enqueue: "a" },
+            { at: 30; dispatch: "visibilitychange" },
+          ],
         ]
       >,
       "=",
@@ -127,7 +148,10 @@ declare namespace MappedDebouncer {
         typeof timeline,
         [
           config: { idleMs: 100; maxWaitMs: 1000 },
-          steps: [{ at: 0; enqueue: "a" }, { at: 30; dispatch: "beforeunload" }],
+          steps: [
+            { at: 0; enqueue: "a" },
+            { at: 30; dispatch: "beforeunload" },
+          ],
         ]
       >,
       "=",
@@ -141,7 +165,11 @@ declare namespace MappedDebouncer {
       typeof timeline,
       [
         config: { idleMs: 100; maxWaitMs: 1000 },
-        steps: [{ at: 0; enqueue: "a" }, { at: 10; dispose: true }, { at: 30; dispatch: "pagehide" }],
+        steps: [
+          { at: 0; enqueue: "a" },
+          { at: 10; dispose: true },
+          { at: 30; dispatch: "pagehide" },
+        ],
       ]
     >,
     "=",

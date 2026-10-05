@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|MultiEdit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // empty' | xargs -r -d '\\n' node \"$CLAUDE_PROJECT_DIR/suede.vsix.format-on-save/cli.mjs\" format >/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}
