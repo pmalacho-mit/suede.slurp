@@ -17,6 +17,9 @@ export default defineConfig({
       sweaterVest.project(),
       {
         extends: true,
+        // Svelte's client build, so that release/ files run under jsdom
+        // (`// @vitest-environment jsdom`) can run effects.
+        resolve: { conditions: ["browser"] },
         plugins: [
           namespaceTests({ tsconfig: "tsconfig.app.json", exclude: libraries }),
         ],

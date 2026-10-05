@@ -201,4 +201,19 @@ The modules carry their tests as [namespace tests](https://github.com/pmalacho-m
 
 - `handlers.ts` — handler defaults, keys, and the serialize/encode pipeline.
 - `params.ts` — editing a URL's search params, and the registry that reads parameters into properties and decides when to write.
-- `debounce.ts`, `utils.ts` — validation, and `resolve`.
+- `URLParameterize.svelte.ts` — the whole behavior in a browser: each test is a scenario (a URL, a tracked object, steps such as `set`, `navigate`, `back`, `prefix`, `wait`, `cleanup`) and what the URL, the history and the values are after each step.
+- `debounce.ts` — validation, and timing on fake timers.
+- `utils.ts` — `resolve`, and doing nothing outside a browser.
+
+What a type cannot say (runes, timers, awaiting the back button) is played out by the harnesses in `_internal/harness.svelte.ts`, which the tests import as types: none of it reaches a build.
+
+`URLParameterize.svelte.ts` and `debounce.ts` declare `// @vitest-environment jsdom`. To run them, give the Vitest project that runs namespace tests Svelte's client build:
+
+```ts
+{
+  extends: true,
+  resolve: { conditions: ["browser"] },
+  plugins: [namespaceTests()],
+  test: { name: "unit", environment: "node" },
+}
+```

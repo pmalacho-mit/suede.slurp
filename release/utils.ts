@@ -2,6 +2,7 @@ import type {
   Expect,
   Invoke,
 } from "../suede.nests.slurp/dsl.import.meta.vitest.ts";
+import type URLParameterize from "./URLParameterize.svelte";
 
 export const isBrowser = typeof window !== "undefined";
 
@@ -42,6 +43,18 @@ declare namespace isBrowser {
 declare namespace supportsHistory {
   /** false without a browser's History API */
   export type OutsideABrowser = Expect<typeof supportsHistory, "=", false>;
+
+  type Tracked = Invoke<
+    typeof URLParameterize,
+    [target: { page: 1 }, handlers: { page: typeof Number }]
+  >;
+
+  /** and so URLParameterize does nothing (on a server, say): importing and calling it does not throw */
+  export type URLParameterizeDisabled = [
+    Expect<Tracked, "hasKey", "cleanup">,
+    Expect<Invoke<Tracked["cleanup"]>, "undefined">,
+    Expect<Invoke<Tracked["prefix"], [prefix: "v2_"]>, "undefined">,
+  ];
 }
 
 declare namespace resolve {

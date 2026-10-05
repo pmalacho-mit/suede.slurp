@@ -71,6 +71,8 @@
     url.searchParams.append("tags", '"svelte"');
     history.pushState({}, "", url);
     flushSync();
-    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual(["svelte"]);
+    expect(
+      screen.getAllByRole("listitem").map((item) => item.textContent),
+    ).toEqual(["svelte"]);
   })}
 {/snippet}

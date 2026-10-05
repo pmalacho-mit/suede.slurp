@@ -97,7 +97,10 @@
 
 <script lang="ts">
   import type Self from "./App.svelte";
-  import type { Test, Widen } from "../suede.sweater-vest/dsl.import.meta.vitest";
+  import type {
+    Test,
+    Widen,
+  } from "../suede.sweater-vest/dsl.import.meta.vitest";
 
   const model = new Model();
 
@@ -184,7 +187,11 @@
 
 <!-- typing into a tracked field writes it into the URL, under the model's prefix,
      percent-encoded once (by the URL itself) -->
-{#snippet writesToTheURL(App: typeof Self, pocket: { el: HTMLDivElement }, test: Test)}
+{#snippet writesToTheURL(
+  App: typeof Self,
+  pocket: { el: HTMLDivElement },
+  test: Test,
+)}
   <div bind:this={pocket.el}><App /></div>
   {test(async ({ expect, user, within }) => {
     const param = (key: string) => new URL(location.href).searchParams.get(key);
@@ -204,15 +211,24 @@
 {/snippet}
 
 <!-- a change to the URL is read back into the model, and so into the inputs -->
-{#snippet readsFromTheURL(App: typeof Self, pocket: { el: HTMLDivElement }, test: Test)}
+{#snippet readsFromTheURL(
+  App: typeof Self,
+  pocket: { el: HTMLDivElement },
+  test: Test,
+)}
   <div bind:this={pocket.el}><App /></div>
   {test(async ({ expect, within, flushSync }) => {
-    const [hello, firstItem] = within(pocket.el).getAllByRole("textbox") as HTMLInputElement[];
+    const [hello, firstItem] = within(pocket.el).getAllByRole(
+      "textbox",
+    ) as HTMLInputElement[];
     expect(hello.value).toBe("world");
 
     const url = new URL(location.href);
     url.searchParams.set("app_hello", "from the url");
-    url.searchParams.set("0_item", JSON.stringify({ hello: "also from the url" }));
+    url.searchParams.set(
+      "0_item",
+      JSON.stringify({ hello: "also from the url" }),
+    );
     history.pushState({}, "", url);
     flushSync();
 
@@ -222,11 +238,17 @@
 {/snippet}
 
 <!-- each edit is a history entry: going back restores the previous value -->
-{#snippet followsHistory(App: typeof Self, pocket: { el: HTMLDivElement }, test: Test)}
+{#snippet followsHistory(
+  App: typeof Self,
+  pocket: { el: HTMLDivElement },
+  test: Test,
+)}
   <div bind:this={pocket.el}><App /></div>
   {test(async ({ expect, user, within, waitFor }) => {
     const param = (key: string) => new URL(location.href).searchParams.get(key);
-    const [hello] = within(pocket.el).getAllByRole("textbox") as HTMLInputElement[];
+    const [hello] = within(pocket.el).getAllByRole(
+      "textbox",
+    ) as HTMLInputElement[];
     await user.type(hello, "!");
     expect(param("app_hello")).toBe("world!");
 
@@ -237,7 +259,11 @@
 {/snippet}
 
 <!-- mounting writes the initial values without adding history entries, and unmounting removes them -->
-{#snippet mountsWithoutHistory(App: typeof Self, pocket: { shown: Widen<false> }, test: Test)}
+{#snippet mountsWithoutHistory(
+  App: typeof Self,
+  pocket: { shown: Widen<false> },
+  test: Test,
+)}
   {#if pocket.shown}<App />{/if}
   {test(async ({ expect, flushSync }) => {
     const entries = history.length;
@@ -254,10 +280,16 @@
 {/snippet}
 
 <!-- a parameter removed from the URL is resolved from undefined: the hello handler's fallback is "hi" -->
-{#snippet resolvesRemoved(App: typeof Self, pocket: { el: HTMLDivElement }, test: Test)}
+{#snippet resolvesRemoved(
+  App: typeof Self,
+  pocket: { el: HTMLDivElement },
+  test: Test,
+)}
   <div bind:this={pocket.el}><App /></div>
   {test(async ({ expect, within, flushSync }) => {
-    const [hello] = within(pocket.el).getAllByRole("textbox") as HTMLInputElement[];
+    const [hello] = within(pocket.el).getAllByRole(
+      "textbox",
+    ) as HTMLInputElement[];
     const url = new URL(location.href);
     url.searchParams.delete("app_hello");
     history.pushState({}, "", url);
@@ -267,10 +299,16 @@
 {/snippet}
 
 <!-- a value that is not what the handler expects is resolved, not thrown -->
-{#snippet toleratesBadValues(App: typeof Self, pocket: { el: HTMLDivElement }, test: Test)}
+{#snippet toleratesBadValues(
+  App: typeof Self,
+  pocket: { el: HTMLDivElement },
+  test: Test,
+)}
   <div bind:this={pocket.el}><App /></div>
   {test(async ({ expect, within, flushSync }) => {
-    const [, firstItem, secondItem] = within(pocket.el).getAllByRole("textbox") as HTMLInputElement[];
+    const [, firstItem, secondItem] = within(pocket.el).getAllByRole(
+      "textbox",
+    ) as HTMLInputElement[];
     const url = new URL(location.href);
     url.searchParams.set("0_item", "{not json");
     url.searchParams.append("1_item", JSON.stringify({ hello: "duplicate" }));
@@ -282,7 +320,11 @@
 {/snippet}
 
 <!-- removing the front item moves the next one to its prefix, and later edits follow it there -->
-{#snippet movesWithItsPrefix(App: typeof Self, pocket: { el: HTMLDivElement }, test: Test)}
+{#snippet movesWithItsPrefix(
+  App: typeof Self,
+  pocket: { el: HTMLDivElement },
+  test: Test,
+)}
   <div bind:this={pocket.el}><App /></div>
   {test(async ({ expect, user, within }) => {
     const param = (key: string) => new URL(location.href).searchParams.get(key);
@@ -290,7 +332,9 @@
     await user.type(firstItem, "!");
     expect(JSON.parse(param("0_item")!)).toEqual({ hello: "world!" });
 
-    await user.click(within(pocket.el).getByRole("button", { name: "Remove front" }));
+    await user.click(
+      within(pocket.el).getByRole("button", { name: "Remove front" }),
+    );
     expect(JSON.parse(param("0_item")!)).toEqual({ hello: "world" });
     expect(param("1_item")).toBeNull();
 

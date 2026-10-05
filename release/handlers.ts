@@ -280,7 +280,10 @@ declare namespace keyOf {
         expected: "app_query",
       ],
       [
-        args: [handler: { resolve: typeof String; key: "q" }, property: "query"],
+        args: [
+          handler: { resolve: typeof String; key: "q" },
+          property: "query",
+        ],
         expected: "q",
       ],
       [
@@ -442,7 +445,10 @@ declare namespace evaluate {
 
   /** what parameterize writes (see parameterize > Values), evaluate reads back */
   export type RoundTrip = Expect<
-    Invoke<typeof evaluate, [handler: Single, value: '"a b&c"', param: "query"]>,
+    Invoke<
+      typeof evaluate,
+      [handler: Single, value: '"a b&c"', param: "query"]
+    >,
     "=",
     "a b&c"
   >;
