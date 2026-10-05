@@ -4,7 +4,7 @@
 ; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
 ;
 [subrepo]
-	remote = https://github.com/pmalacho-mit/svelte-url-parameterizer-suede
+	remote = https://github.com/pmalacho-mit/suede.slurp.git
 	branch = release
 	commit = f28e8bde3a5b5202c250060023927dfee11bf015
 	parent = 24c6d2f9891ef9c78d913f377bba429911ac154a
