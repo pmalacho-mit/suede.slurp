@@ -4,13 +4,16 @@ Slurp (<ins style="color:white"><span style="color:#aa1e1e">**S**</span><sub>_ve
 
 This repo is a [suede dependency](https://github.com/pmalacho-mit/suede). 
 
-To see the installable source code, please checkout the [release branch](https://github.com/pmalacho-mit/svelte-url-parameterizer-suede/tree/release).
+To see the installable source code, please checkout the [release branch](https://github.com/pmalacho-mit/suede.slurp/tree/release).
 
 ## Installation
 
 ```bash
-bash <(curl https://suede.sh/install-release) --repo pmalacho-mit/svelte-url-parameterizer-suede
+bash <(curl -fsSL https://suede.sh/install/release) --repo pmalacho-mit/suede.slurp
 ```
+
+Run it where you want the dependency. It installs `./suede.slurp`, stages it, and prints what
+else (if anything) has to be installed beside it.
 
 <details>
 <summary>
@@ -18,7 +21,7 @@ See alternative to using <a href="https://github.com/pmalacho-mit/suede#suedesh"
 </summary>
 
 ```bash
-bash <(curl https://raw.githubusercontent.com/pmalacho-mit/suede/refs/heads/main/scripts/install-release.sh) --repo pmalacho-mit/svelte-url-parameterizer-suede
+bash <(curl -fsSL https://raw.githubusercontent.com/pmalacho-mit/suede/refs/heads/main/scripts/install/release.sh) --repo pmalacho-mit/suede.slurp
 ```
 
 </details>
