@@ -4,7 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "workspaces": [
-    "release"
+    "release",
+    "suede.nests",
+    "suede.sweater-vest"
   ],
   "scripts": {
     "dev": "vite --host 0.0.0.0",
