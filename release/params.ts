@@ -1,3 +1,4 @@
+// @vitest-environment node
 import type {
   Call,
   Construct,
@@ -10,6 +11,7 @@ import type {
 import {
   type AnyParameterHandler,
   type Encoded,
+  type URLPart,
   type UpdateHistoryBehavior,
   evaluate,
   parameterize,
@@ -17,8 +19,8 @@ import {
   verbosify,
 } from "./handlers";
 
-/** Parameters to change in a URL: a value, several, or `undefined` to remove it. */
-export type Changes = Record<string, Encoded>;
+/** Parameters to change in a URL, by the part they are in: a value, several, or `undefined` to remove it. */
+export type Changes = Partial<Record<URLPart, Record<string, Encoded>>>;
 
 const entries = (encoded: Encoded) =>
   encoded === undefined
@@ -27,28 +29,188 @@ const entries = (encoded: Encoded) =>
       ? [encoded]
       : encoded;
 
+/** The text a part of `href` holds its parameters in, without its `?` or `#`. */
+export const paramsIn = (href: string, part: URLPart) => {
+  const url = new URL(href, "http://localhost");
+  return (part === "hash" ? url.hash : url.search).slice(1);
+};
+
+/** Decodes a query component as URLSearchParams does: `+` is a space, and a bad escape is left as it is. */
+const decode = (component: string) => {
+  const spaced = component.replaceAll("+", " ");
+  try {
+    return decodeURIComponent(spaced);
+  } catch {
+    return spaced;
+  }
+};
+
+/** A `name=value` segment's name and value, decoded. */
+const split = (segment: string): [string, string] => {
+  const at = segment.indexOf("=");
+  return at === -1
+    ? [decode(segment), ""]
+    : [decode(segment.slice(0, at)), decode(segment.slice(at + 1))];
+};
+
+/** Every parameter's values in `params` text, by name: parsed once, then looked up. */
+export const index = (params: string | URLSearchParams) => {
+  const values = new Map<string, string[]>();
+  for (const [name, value] of new URLSearchParams(params)) {
+    const all = values.get(name);
+    if (all) all.push(value);
+    else values.set(name, [value]);
+  }
+  return values;
+};
+
+/** Parsed parameters: text, a URLSearchParams, or an `index` of one. */
+export type Params = string | URLSearchParams | Map<string, string[]>;
+
+const valuesOf = (params: Params, param: string) =>
+  params instanceof Map
+    ? (params.get(param) ?? [])
+    : new URLSearchParams(params).getAll(param);
+
 /**
- * `href` with `changes` made to its search params, every other part untouched.
- * Returns `href` itself when nothing would change.
+ * `params` (`a=1&b=2`) with `changes` made, or undefined when nothing would
+ * change. A changed parameter keeps its place; the others keep their spelling.
+ * One pass over the text, whatever the number of parameters.
  */
-export const withParams = (href: string, changes: Changes): string => {
-  const url = new URL(href);
-  const { searchParams } = url;
+const edit = (params: string, changes: Record<string, Encoded> = {}) => {
+  const pending = Object.entries(changes);
+  if (pending.length === 0) return undefined;
+  let segments = (params ? params.split("&") : []).map((raw) => ({
+    raw,
+    name: split(raw)[0],
+  }));
   let changed = false;
-  for (const [param, value] of Object.entries(changes)) {
+  for (const [param, value] of pending) {
     const next = entries(value);
-    const current = searchParams.getAll(param);
+    const current = segments
+      .filter((segment) => segment.name === param)
+      .map((segment) => split(segment.raw)[1]);
     if (
       current.length === next.length &&
       current.every((entry, index) => entry === next[index])
     )
       continue;
     changed = true;
-    searchParams.delete(param);
-    for (const entry of next) searchParams.append(param, entry);
+    const at = segments.findIndex((segment) => segment.name === param);
+    segments = segments.filter((segment) => segment.name !== param);
+    segments.splice(
+      at === -1 ? segments.length : at,
+      0,
+      ...next.map((entry) => ({
+        raw: new URLSearchParams([[param, entry]]).toString(),
+        name: param,
+      })),
+    );
   }
-  return changed ? url.href : href;
+  return changed ? segments.map((segment) => segment.raw).join("&") : undefined;
 };
+
+/**
+ * `href` with `changes` made to the parameters in its query and its hash,
+ * every other part untouched. Returns `href` itself when nothing would change.
+ */
+export const withParams = (href: string, changes: Changes): string => {
+  const url = new URL(href);
+  const query = edit(url.search.slice(1), changes.query);
+  const hash = edit(url.hash.slice(1), changes.hash);
+  if (query === undefined && hash === undefined) return href;
+  if (query !== undefined) url.search = query;
+  if (hash !== undefined) url.hash = hash;
+  return url.href;
+};
+
+declare namespace index {
+  type Indexed = Invoke<typeof index, [params: "a=1&b=x+y&a=%22q%22"]>;
+
+  /** every parameter's values, decoded, by name, repeated ones in order */
+  export type Indexes = [
+    Expect<Call<Indexed, "get", [key: "a"]>, "=", ["1", '"q"']>,
+    Expect<Call<Indexed, "get", [key: "b"]>, "=", ["x y"]>,
+    Expect<Call<Indexed, "has", [key: "c"]>, "=", false>,
+  ];
+}
+
+declare namespace withParams {
+  /** sets, appends and removes, leaving the other params, the path and the hash alone */
+  export type Changes = Expect<
+    Invoke<
+      typeof withParams,
+      [
+        href: "https://example.com/page?keep=1&gone=2#top",
+        changes: { query: { gone: undefined; one: "a"; many: ["x", "y"] } },
+      ]
+    >,
+    "=",
+    "https://example.com/page?keep=1&one=a&many=x&many=y#top"
+  >;
+
+  /** values are percent-encoded once, by the URL */
+  export type EncodesOnce = Expect<
+    Invoke<
+      typeof withParams,
+      [href: "https://example.com/", changes: { query: { q: '{"a":"b c"}' } }]
+    >,
+    "=",
+    "https://example.com/?q=%7B%22a%22%3A%22b+c%22%7D"
+  >;
+
+  /** no change, not even to how the URL is written, when the values are already there */
+  export type Unchanged = Expect<
+    Invoke<
+      typeof withParams,
+      [
+        href: "https://example.com/?a=b%20c&gone",
+        changes: { query: { a: "b c"; missing: undefined; empty: [] } },
+      ]
+    >,
+    "=",
+    "https://example.com/?a=b%20c&gone"
+  >;
+
+  /** a changed parameter keeps its place, and the others keep how they are written */
+  export type InPlace = Expect<
+    Invoke<
+      typeof withParams,
+      [
+        href: "https://example.com/?a=b%20c&q=1&z=2",
+        changes: { query: { q: "3" } },
+      ]
+    >,
+    "=",
+    "https://example.com/?a=b%20c&q=3&z=2"
+  >;
+
+  /** parameters in the hash are written as they are in the query */
+  export type Hash = Expect<
+    Invoke<
+      typeof withParams,
+      [
+        href: "https://example.com/?keep=1",
+        changes: { hash: { tab: "about"; q: '"b c"' } },
+      ]
+    >,
+    "=",
+    "https://example.com/?keep=1#tab=about&q=%22b+c%22"
+  >;
+
+  /** a query or hash left without parameters goes, its `?` or `#` with it */
+  export type Empties = Expect<
+    Invoke<
+      typeof withParams,
+      [
+        href: "https://example.com/?q=1#tab=about",
+        changes: { query: { q: undefined }; hash: { tab: undefined } },
+      ]
+    >,
+    "=",
+    "https://example.com/"
+  >;
+}
 
 /**
  * Reads the values a URL holds for `param` into `target[key]`, through the
@@ -79,17 +241,78 @@ export const assign = (
         : evaluate(handler, values[0], param);
 };
 
+declare namespace assign {
+  type Tags = Invoke<
+    typeof verbosify,
+    [handler: { resolve: typeof String; entries: "multiple" }, property: "tags"]
+  >;
+
+  type Target = Fixture<{ tags: string[] }, { tags: ["a", "b", "c"] }>;
+
+  /** an array that the URL shortens loses its extra entries */
+  export type Shrinks = Given<
+    Invoke<
+      typeof assign,
+      [
+        target: Target,
+        key: "tags",
+        handler: Tags,
+        param: "tags",
+        values: ['"x"'],
+        previous: [],
+      ]
+    >,
+    Expect<Target["tags"], "=", ["x"]>
+  >;
+
+  type Unset = Fixture<{ tags?: string[] }, {}>;
+
+  /** a multiple-entry target that is not an array yet becomes one */
+  export type Creates = Given<
+    Invoke<
+      typeof assign,
+      [
+        target: Unset,
+        key: "tags",
+        handler: Tags,
+        param: "tags",
+        values: ['"x"', '"y"'],
+      ]
+    >,
+    Expect<Unset["tags"], "=", ["x", "y"]>
+  >;
+
+  type Page = Fixture<{ page: number }, { page: 1 }>;
+
+  /** a single value read from duplicated entries is the first */
+  export type FirstOfDuplicates = Given<
+    Invoke<
+      typeof assign,
+      [
+        target: Page,
+        key: "page",
+        handler: Invoke<
+          typeof verbosify,
+          [handler: typeof Number, property: "page"]
+        >,
+        param: "page",
+        values: ["2", "5"],
+      ]
+    >,
+    Expect<Page["page"], "=", 2>
+  >;
+}
+
 /**
- * Reads the `previousKeys` a handler migrates from into `target[key]`, and
- * returns the removals to make, by history behavior.
+ * Reads the `previousKeys` a handler migrates from (in `href`) into
+ * `target[key]`, and returns the removals to make, by history behavior.
  */
 export const migrate = (
-  search: string | URLSearchParams,
+  href: string,
   target: object,
   key: string,
   handler: AnyParameterHandler,
 ) => {
-  const params = new URLSearchParams(search);
   const removals: Record<UpdateHistoryBehavior, Changes> = {
     push: {},
     replace: {},
@@ -99,7 +322,9 @@ export const migrate = (
     remove = true,
     apply = true,
     behavior = "replace",
+    in: part = handler.in,
   } of handler.previousKeys ?? []) {
+    const params = new URLSearchParams(paramsIn(href, part));
     if (!params.has(fullname)) continue;
     if (apply)
       try {
@@ -107,10 +332,90 @@ export const migrate = (
       } catch (error) {
         console.error(`URLParameterize: could not read "${fullname}"`, error);
       }
-    if (remove) removals[behavior][fullname] = undefined;
+    if (remove) (removals[behavior][part] ??= {})[fullname] = undefined;
   }
   return removals;
 };
+
+declare namespace migrate {
+  type Hello = Invoke<
+    typeof verbosify,
+    [
+      handler: {
+        resolve: typeof String;
+        previousKeys: [
+          { fullname: "greeting" },
+          { fullname: "salutation"; behavior: "push"; apply: false },
+          { fullname: "absent"; behavior: "push" },
+        ];
+      },
+      property: "hello",
+    ]
+  >;
+  type Target = Fixture<{ hello: string }, { hello: "initial" }>;
+
+  /** an old key's value is applied, and the old keys found are removed, by behavior */
+  export type Migrates = [
+    Expect<
+      Invoke<
+        typeof migrate,
+        [
+          href: '?greeting="hi"&salutation="yo"',
+          target: Target,
+          key: "hello",
+          handler: Hello,
+        ]
+      >,
+      "=",
+      {
+        push: { query: { salutation: undefined } };
+        replace: { query: { greeting: undefined } };
+      }
+    >,
+    Expect<Target["hello"], "=", "hi">,
+  ];
+
+  /** with no old key in the URL, nothing is applied or removed */
+  export type Absent = [
+    Expect<
+      Invoke<
+        typeof migrate,
+        [href: "?other=1", target: Target, key: "hello", handler: Hello]
+      >,
+      "=",
+      { push: {}; replace: {} }
+    >,
+    Expect<Target["hello"], "=", "initial">,
+  ];
+
+  /** a parameter moved from the query to the hash reads its old value from the query */
+  export type QueryToHash = [
+    Expect<
+      Invoke<
+        typeof migrate,
+        [
+          href: '?hello="old"#other=1',
+          target: Target,
+          key: "hello",
+          handler: Invoke<
+            typeof verbosify,
+            [
+              handler: {
+                resolve: typeof String;
+                in: "hash";
+                previousKeys: [{ fullname: "hello"; in: "query" }];
+              },
+              property: "hello",
+            ]
+          >,
+        ]
+      >,
+      "=",
+      { push: {}; replace: { query: { hello: undefined } } }
+    >,
+    Expect<Target["hello"], "=", "old">,
+  ];
+}
 
 type Entry = {
   handler: AnyParameterHandler;
@@ -118,6 +423,8 @@ type Entry = {
   seen?: string;
   /** the value the target was last synced at, as written to the URL */
   synced?: string;
+  /** the target holds a change the URL never got: read the URL next time, even if it is unchanged */
+  stale?: boolean;
 };
 
 /**
@@ -157,26 +464,23 @@ export class Registry {
   }
 
   /**
-   * Reads `param` from `search` into `target[key]` if the URL changed it.
+   * Reads `param` from `search` (the query or hash it is in) into `target[key]` if the URL changed it.
    *
    * A parameter missing from the URL when it is first read leaves the target
    * as it is; one that goes missing later is resolved from `undefined`. A value
    * that cannot be read is reported, and the target keeps what it had.
    */
-  read(
-    search: string | URLSearchParams,
-    target: object,
-    key: string,
-    param: string,
-  ) {
+  read(search: Params, target: object, key: string, param: string) {
     const entry = this.#entries.get(param);
     if (!entry) return;
-    const values = new URLSearchParams(search).getAll(param);
+    const values = valuesOf(search, param);
     const seen = JSON.stringify(values);
-    if (seen === entry.seen) return;
-    const previous: string[] = entry.seen ? JSON.parse(entry.seen) : [];
+    if (seen === entry.seen && !entry.stale) return;
+    const previous: string[] =
+      entry.seen && !entry.stale ? JSON.parse(entry.seen) : [];
     const first = entry.seen === undefined;
     entry.seen = seen;
+    entry.stale = false;
     if (first && values.length === 0) return;
     try {
       assign(target, key, entry.handler, param, values, previous);
@@ -188,6 +492,19 @@ export class Registry {
     } catch (error) {
       console.error(`URLParameterize: could not read "${param}"`, error);
     }
+  }
+
+  /** Marks `param` as holding a change that will not be written, so that the next read replaces it. */
+  invalidate(param: string) {
+    const entry = this.#entries.get(param);
+    if (entry) entry.stale = true;
+  }
+
+  /** Whether `encoded` is what `param` was last synced at, so that writing it would change nothing. */
+  synced(param: string, encoded: Encoded) {
+    return (
+      this.#entries.get(param)?.synced === JSON.stringify(entries(encoded))
+    );
   }
 
   /**
@@ -202,152 +519,6 @@ export class Registry {
     entry.synced = entry.seen = synced;
     return true;
   }
-}
-
-declare namespace withParams {
-  /** sets, appends and removes, leaving the other params, the path and the hash alone */
-  export type Changes = Expect<
-    Invoke<
-      typeof withParams,
-      [
-        href: "https://example.com/page?keep=1&gone=2#top",
-        changes: { gone: undefined; one: "a"; many: ["x", "y"] },
-      ]
-    >,
-    "=",
-    "https://example.com/page?keep=1&one=a&many=x&many=y#top"
-  >;
-
-  /** values are percent-encoded once, by the URL */
-  export type EncodesOnce = Expect<
-    Invoke<
-      typeof withParams,
-      [href: "https://example.com/", changes: { q: '{"a":"b c"}' }]
-    >,
-    "=",
-    "https://example.com/?q=%7B%22a%22%3A%22b+c%22%7D"
-  >;
-
-  /** no change, not even to how the URL is written, when the values are already there */
-  export type Unchanged = Expect<
-    Invoke<
-      typeof withParams,
-      [
-        href: "https://example.com/?a=b%20c&gone",
-        changes: { a: "b c"; missing: undefined; empty: [] },
-      ]
-    >,
-    "=",
-    "https://example.com/?a=b%20c&gone"
-  >;
-}
-
-declare namespace assign {
-  type Tags = Invoke<
-    typeof verbosify,
-    [handler: { resolve: typeof String; entries: "multiple" }, property: "tags"]
-  >;
-
-  /** an array that the URL shortens loses its extra entries */
-  export type Shrinks = Given<
-    Invoke<
-      typeof assign,
-      [
-        target: Target,
-        key: "tags",
-        handler: Tags,
-        param: "tags",
-        values: ['"x"'],
-        previous: [],
-      ]
-    >,
-    Expect<Target["tags"], "=", ["x"]>
-  >;
-  type Target = Fixture<{ tags: string[] }, { tags: ["a", "b", "c"] }>;
-
-  /** a multiple-entry target that is not an array yet becomes one */
-  export type Creates = Given<
-    Invoke<
-      typeof assign,
-      [
-        target: Unset,
-        key: "tags",
-        handler: Tags,
-        param: "tags",
-        values: ['"x"', '"y"'],
-      ]
-    >,
-    Expect<Unset["tags"], "=", ["x", "y"]>
-  >;
-  type Unset = Fixture<{ tags?: string[] }, {}>;
-
-  /** a single value read from duplicated entries is the first */
-  export type FirstOfDuplicates = Given<
-    Invoke<
-      typeof assign,
-      [
-        target: Page,
-        key: "page",
-        handler: Invoke<
-          typeof verbosify,
-          [handler: typeof Number, property: "page"]
-        >,
-        param: "page",
-        values: ["2", "5"],
-      ]
-    >,
-    Expect<Page["page"], "=", 2>
-  >;
-  type Page = Fixture<{ page: number }, { page: 1 }>;
-}
-
-declare namespace migrate {
-  type Hello = Invoke<
-    typeof verbosify,
-    [
-      handler: {
-        resolve: typeof String;
-        previousKeys: [
-          { fullname: "greeting" },
-          { fullname: "salutation"; behavior: "push"; apply: false },
-          { fullname: "absent"; behavior: "push" },
-        ];
-      },
-      property: "hello",
-    ]
-  >;
-  type Target = Fixture<{ hello: string }, { hello: "initial" }>;
-
-  /** an old key's value is applied, and the old keys found are removed, by behavior */
-  export type Migrates = [
-    Expect<
-      Invoke<
-        typeof migrate,
-        [
-          search: '?greeting="hi"&salutation="yo"',
-          target: Target,
-          key: "hello",
-          handler: Hello,
-        ]
-      >,
-      "=",
-      { push: { salutation: undefined }; replace: { greeting: undefined } }
-    >,
-    Expect<Target["hello"], "=", "hi">,
-  ];
-
-  /** with no old key in the URL, nothing is applied or removed */
-  export type Absent = [
-    Expect<
-      Invoke<
-        typeof migrate,
-        [search: "?other=1", target: Target, key: "hello", handler: Hello]
-      >,
-      "=",
-      { push: {}; replace: {} }
-    >,
-    Expect<Target["hello"], "=", "initial">,
-  ];
 }
 
 declare namespace Registry {

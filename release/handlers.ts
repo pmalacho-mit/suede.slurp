@@ -7,6 +7,8 @@ import { type Expand, type MaybeGetter, resolve } from "./utils";
 import type { Config as DebounceConfig } from "./debounce";
 
 export type UpdateHistoryBehavior = "push" | "replace";
+/** The part of the URL a parameter is stored in: its query (`?q=…`) or its hash (`#q=…`). */
+export type URLPart = "query" | "hash";
 export type EntryBehavior = "multiple" | "single";
 
 export type SingularVerboseParameterHandler<T> = Expand<{
@@ -25,6 +27,15 @@ export type SingularVerboseParameterHandler<T> = Expand<{
    * @default "push"
    */
   history?: UpdateHistoryBehavior;
+  /**
+   * The part of the URL the parameter is stored in.
+   *
+   * - `"query"`: the query (`?q=…`), which is sent to the server
+   * - `"hash"`: the hash (`#q=…`), which is not; it then holds parameters, so it can't also be an anchor
+   *
+   * @default "query"
+   */
+  in?: URLPart;
   /**
    * Specifies whether this parameter allows single or multiple values.
    *
@@ -102,6 +113,8 @@ export type SingularVerboseParameterHandler<T> = Expand<{
         remove?: boolean;
         apply?: boolean;
         behavior?: UpdateHistoryBehavior;
+        /** where the old key is: default, where the parameter is now */
+        in?: URLPart;
       }[]
     | null;
 }>;
@@ -113,7 +126,7 @@ export type Options = Partial<
     debounce: DebounceConfig;
   } & Pick<
     SingularVerboseParameterHandler<any>,
-    "history" | "encode" | "decode" | "deserialize" | "serialize"
+    "history" | "in" | "encode" | "decode" | "deserialize" | "serialize"
   >
 >;
 
@@ -127,6 +140,8 @@ export type Options = Partial<
 export const defaults = {
   /** Default history behavior: creates new history entries for URL changes */
   history: "push",
+  /** Default part of the URL: the query */
+  in: "query",
   /** Default entry behavior: single value per parameter */
   entries: "single",
   /** Default debounce behavior: no debouncing (null means use global config if set) */
@@ -157,199 +172,11 @@ export const defaults = {
   | "deserialize"
   | "serialize"
   | "history"
+  | "in"
   | "entries"
   | "debounce"
   | "previousKeys"
 >;
-
-/**
- * Before encoding was left to the URL, values were percent-encoded twice, so
- * links in the wild hold JSON that is still percent-encoded once.
- */
-const legacy = (query: string): unknown => {
-  if (!/%[0-9A-Fa-f]{2}/.test(query)) return undefined;
-  try {
-    return JSON.parse(decodeURIComponent(query));
-  } catch {
-    return undefined;
-  }
-};
-
-type Default<K extends keyof typeof defaults> = (typeof defaults)[K];
-
-type MultipleVerboseParameterHandler<T extends any[]> = Expand<
-  Omit<SingularVerboseParameterHandler<T[number]>, "entries"> & {
-    /**
-     * Specifies that this parameter allows multiple values.
-     *
-     * When set to `"multiple"`, the parameter can accept an array of values
-     * and will handle multiple query parameter entries with the same key.
-     *
-     * @example URL with multiple entries: `?tag=js&tag=ts&tag=svelte`
-     */
-    entries: Extract<EntryBehavior, "multiple">;
-  }
->;
-
-type VerboseParameterHandler<T> = T extends any[]
-  ? SingularVerboseParameterHandler<T> | MultipleVerboseParameterHandler<T>
-  : SingularVerboseParameterHandler<T>;
-
-export type ParameterHandler<T> =
-  | SingularVerboseParameterHandler<T>["resolve"]
-  | VerboseParameterHandler<T>;
-
-export type ParameterHandlers<T> = {
-  [k in keyof T & string]: ParameterHandler<T[k]>;
-};
-
-export type ResolvedParameterHandler<T> = Required<VerboseParameterHandler<T>>;
-export type AnyParameterHandler = ResolvedParameterHandler<any | any[]>;
-
-/** What a parameter holds in the URL: one value, several, or none (absent). */
-export type Encoded = string | string[] | undefined;
-
-/** The URL parameter a property is stored under: the prefix, then the handler's key or the property's name. */
-export const keyOf = (
-  handler: ParameterHandler<any>,
-  property: string,
-  prefix = "",
-) =>
-  prefix +
-  (typeof handler === "function" ? property : (handler.key ?? property));
-
-/** A handler with every field filled in: its own, then the options', then the defaults. */
-export const verbosify = (
-  handler: ParameterHandler<any>,
-  property: string,
-  options?: Options,
-): AnyParameterHandler => {
-  const verbose: VerboseParameterHandler<any> =
-    typeof handler === "function" ? { resolve: handler } : handler;
-  return {
-    resolve: verbose.resolve,
-    key: keyOf(handler, property, resolve(options?.prefix, "")),
-    entries: (verbose.entries ?? defaults.entries) as Default<"entries">,
-    debounce: verbose.debounce ?? defaults.debounce,
-    previousKeys: verbose.previousKeys ?? defaults.previousKeys,
-    history: verbose.history ?? options?.history ?? defaults.history,
-    deserialize:
-      verbose.deserialize ?? options?.deserialize ?? defaults.deserialize,
-    serialize: verbose.serialize ?? options?.serialize ?? defaults.serialize,
-    encode: verbose.encode ?? options?.encode ?? defaults.encode,
-    decode: verbose.decode ?? options?.decode ?? defaults.decode,
-  } satisfies Required<
-    SingularVerboseParameterHandler<any>
-  > as AnyParameterHandler;
-};
-
-export const supportsMultiple = (
-  handler: AnyParameterHandler,
-): handler is Required<MultipleVerboseParameterHandler<any[]>> =>
-  handler.entries === "multiple";
-
-/** Reading: a value from the URL, through `decode`, `deserialize` and `resolve`. */
-export const evaluate = (
-  { decode, deserialize, resolve }: AnyParameterHandler,
-  value: string,
-  param: string,
-  index: number | undefined = undefined,
-) => resolve(deserialize(decode(value)), param, index);
-
-/** Writing: a value, through `serialize` and `encode`, to what the URL should hold. */
-export const parameterize = (
-  value: any,
-  { serialize, encode, entries }: AnyParameterHandler,
-): Encoded => {
-  const one = (value: any) => {
-    const serialized = serialize(value);
-    return serialized === undefined ? undefined : encode(serialized);
-  };
-  if (entries !== "multiple") return one(value);
-  if (!Array.isArray(value)) return undefined;
-  return value.map(one).filter((entry) => entry !== undefined);
-};
-
-declare namespace keyOf {
-  export type Names = Table<
-    typeof keyOf,
-    [
-      [args: [handler: typeof String, property: "query"], expected: "query"],
-      [
-        args: [handler: typeof String, property: "query", prefix: "app_"],
-        expected: "app_query",
-      ],
-      [
-        args: [
-          handler: { resolve: typeof String; key: "q" },
-          property: "query",
-        ],
-        expected: "q",
-      ],
-      [
-        args: [
-          handler: { resolve: typeof String; key: "q" },
-          property: "query",
-          prefix: "app_",
-        ],
-        expected: "app_q",
-      ],
-    ]
-  >;
-}
-
-declare namespace verbosify {
-  /** a bare resolve function gets every default */
-  export type Defaults = Expect<
-    Invoke<typeof verbosify, [handler: typeof String, property: "query"]>,
-    "matches",
-    {
-      key: "query";
-      history: "push";
-      entries: "single";
-      debounce: null;
-      previousKeys: null;
-    }
-  >;
-
-  /** the prefix is resolved, from a getter too */
-  export type Prefix = Expect<
-    Invoke<
-      typeof verbosify,
-      [handler: typeof String, property: "query", options: { prefix: "app_" }]
-    >["key"],
-    "=",
-    "app_query"
-  >;
-
-  /** the handler's own setting wins over the options', which win over the defaults */
-  export type Precedence = [
-    Expect<
-      Invoke<
-        typeof verbosify,
-        [
-          handler: typeof String,
-          property: "query",
-          options: { history: "replace" },
-        ]
-      >["history"],
-      "=",
-      "replace"
-    >,
-    Expect<
-      Invoke<
-        typeof verbosify,
-        [
-          handler: { resolve: typeof String; history: "push" },
-          property: "query",
-          options: { history: "replace" },
-        ]
-      >["history"],
-      "=",
-      "push"
-    >,
-  ];
-}
 
 declare namespace defaults {
   type Deserialize = typeof defaults.deserialize;
@@ -396,6 +223,260 @@ declare namespace defaults {
   ];
 }
 
+/**
+ * Before encoding was left to the URL, values were percent-encoded twice, so
+ * links in the wild hold JSON that is still percent-encoded once.
+ */
+const legacy = (query: string): unknown => {
+  if (!/%[0-9A-Fa-f]{2}/.test(query)) return undefined;
+  try {
+    return JSON.parse(decodeURIComponent(query));
+  } catch {
+    return undefined;
+  }
+};
+
+type Default<K extends keyof typeof defaults> = (typeof defaults)[K];
+
+type MultipleVerboseParameterHandler<T extends any[]> = Expand<
+  Omit<SingularVerboseParameterHandler<T[number]>, "entries"> & {
+    /**
+     * Specifies that this parameter allows multiple values.
+     *
+     * When set to `"multiple"`, the parameter can accept an array of values
+     * and will handle multiple query parameter entries with the same key.
+     *
+     * @example URL with multiple entries: `?tag=js&tag=ts&tag=svelte`
+     */
+    entries: Extract<EntryBehavior, "multiple">;
+  }
+>;
+
+// Not distributive (`[…] extends […]`): a property typed as a union, such as
+// `"home" | "about"` or `string | undefined`, gets one handler resolving to the
+// union, not a union of handlers each resolving to one member.
+type VerboseParameterHandler<T> = [NonNullable<T>] extends [any[]]
+  ?
+      | SingularVerboseParameterHandler<T>
+      | MultipleVerboseParameterHandler<NonNullable<T>>
+  : SingularVerboseParameterHandler<T>;
+
+export type ParameterHandler<T> =
+  | SingularVerboseParameterHandler<T>["resolve"]
+  | VerboseParameterHandler<T>;
+
+export type ParameterHandlers<T> = {
+  [k in keyof T & string]: ParameterHandler<T[k]>;
+};
+
+export type ResolvedParameterHandler<T> = Required<VerboseParameterHandler<T>>;
+export type AnyParameterHandler = ResolvedParameterHandler<any | any[]>;
+
+/** What a parameter holds in the URL: one value, several, or none (absent). */
+export type Encoded = string | string[] | undefined;
+
+/** The URL parameter a property is stored under: the prefix, then the handler's key or the property's name. */
+export const keyOf = (
+  handler: ParameterHandler<any>,
+  property: string,
+  prefix = "",
+) =>
+  prefix +
+  (typeof handler === "function" ? property : (handler.key ?? property));
+
+declare namespace keyOf {
+  export type Names = Table<
+    typeof keyOf,
+    [
+      [args: [handler: typeof String, property: "query"], expected: "query"],
+      [
+        args: [handler: typeof String, property: "query", prefix: "app_"],
+        expected: "app_query",
+      ],
+      [
+        args: [
+          handler: { resolve: typeof String; key: "q" },
+          property: "query",
+        ],
+        expected: "q",
+      ],
+      [
+        args: [
+          handler: { resolve: typeof String; key: "q" },
+          property: "query",
+          prefix: "app_",
+        ],
+        expected: "app_q",
+      ],
+    ]
+  >;
+}
+
+/** A handler with every field filled in: its own, then the options', then the defaults. */
+export const verbosify = (
+  handler: ParameterHandler<any>,
+  property: string,
+  options?: Options,
+): AnyParameterHandler => {
+  const verbose: VerboseParameterHandler<any> =
+    typeof handler === "function" ? { resolve: handler } : handler;
+  return {
+    resolve: verbose.resolve,
+    key: keyOf(handler, property, resolve(options?.prefix, "")),
+    entries: (verbose.entries ?? defaults.entries) as Default<"entries">,
+    debounce: verbose.debounce ?? defaults.debounce,
+    previousKeys: verbose.previousKeys ?? defaults.previousKeys,
+    history: verbose.history ?? options?.history ?? defaults.history,
+    in: verbose.in ?? options?.in ?? defaults.in,
+    deserialize:
+      verbose.deserialize ?? options?.deserialize ?? defaults.deserialize,
+    serialize: verbose.serialize ?? options?.serialize ?? defaults.serialize,
+    encode: verbose.encode ?? options?.encode ?? defaults.encode,
+    decode: verbose.decode ?? options?.decode ?? defaults.decode,
+  } satisfies Required<
+    SingularVerboseParameterHandler<any>
+  > as AnyParameterHandler;
+};
+
+declare namespace verbosify {
+  /** a bare resolve function gets every default */
+  export type Defaults = Expect<
+    Invoke<typeof verbosify, [handler: typeof String, property: "query"]>,
+    "matches",
+    {
+      key: "query";
+      history: "push";
+      entries: "single";
+      debounce: null;
+      previousKeys: null;
+      in: "query";
+    }
+  >;
+
+  /** the prefix is resolved, from a getter too */
+  export type Prefix = Expect<
+    Invoke<
+      typeof verbosify,
+      [handler: typeof String, property: "query", options: { prefix: "app_" }]
+    >["key"],
+    "=",
+    "app_query"
+  >;
+
+  /** the handler's own setting wins over the options', which win over the defaults */
+  export type Precedence = [
+    Expect<
+      Invoke<
+        typeof verbosify,
+        [
+          handler: typeof String,
+          property: "query",
+          options: { history: "replace" },
+        ]
+      >["history"],
+      "=",
+      "replace"
+    >,
+    Expect<
+      Invoke<
+        typeof verbosify,
+        [
+          handler: { resolve: typeof String; history: "push" },
+          property: "query",
+          options: { history: "replace" },
+        ]
+      >["history"],
+      "=",
+      "push"
+    >,
+  ];
+
+  /** where a parameter is stored: the options' choice for every handler, a handler's own for itself */
+  export type In = [
+    Expect<
+      Invoke<
+        typeof verbosify,
+        [handler: typeof String, property: "query", options: { in: "hash" }]
+      >["in"],
+      "=",
+      "hash"
+    >,
+    Expect<
+      Invoke<
+        typeof verbosify,
+        [
+          handler: { resolve: typeof String; in: "query" },
+          property: "query",
+          options: { in: "hash" },
+        ]
+      >["in"],
+      "=",
+      "query"
+    >,
+  ];
+}
+
+export const supportsMultiple = (
+  handler: AnyParameterHandler,
+): handler is Required<MultipleVerboseParameterHandler<any[]>> =>
+  handler.entries === "multiple";
+
+/** Reading: a value from the URL, through `decode`, `deserialize` and `resolve`. */
+export const evaluate = (
+  { decode, deserialize, resolve }: AnyParameterHandler,
+  value: string,
+  param: string,
+  index: number | undefined = undefined,
+) => resolve(deserialize(decode(value)), param, index);
+
+declare namespace evaluate {
+  type Single = Invoke<
+    typeof verbosify,
+    [handler: typeof String, property: "query"]
+  >;
+
+  /** what parameterize writes (see parameterize > Values), evaluate reads back */
+  export type RoundTrip = Expect<
+    Invoke<
+      typeof evaluate,
+      [handler: Single, value: '"a b&c"', param: "query"]
+    >,
+    "=",
+    "a b&c"
+  >;
+
+  /** resolve is handed the deserialized value, the param and the index */
+  export type Resolves = Expect<
+    Invoke<
+      typeof evaluate,
+      [
+        handler: Invoke<
+          typeof verbosify,
+          [handler: typeof Number, property: "page"]
+        >,
+        value: "7",
+        param: "page",
+      ]
+    >,
+    "=",
+    7
+  >;
+}
+
+/** Writing: a value, through `serialize` and `encode`, to what the URL should hold. */
+export const parameterize = (
+  value: any,
+  { serialize, encode, entries }: AnyParameterHandler,
+): Encoded => {
+  const single = (value: any) => {
+    const serialized = serialize(value);
+    return serialized === undefined ? undefined : encode(serialized);
+  };
+  if (entries !== "multiple") return single(value);
+  if (!Array.isArray(value)) return undefined;
+  return value.map(single).filter((entry) => entry !== undefined);
+};
+
 declare namespace parameterize {
   type Single = Invoke<
     typeof verbosify,
@@ -435,38 +516,4 @@ declare namespace parameterize {
       []
     >,
   ];
-}
-
-declare namespace evaluate {
-  type Single = Invoke<
-    typeof verbosify,
-    [handler: typeof String, property: "query"]
-  >;
-
-  /** what parameterize writes (see parameterize > Values), evaluate reads back */
-  export type RoundTrip = Expect<
-    Invoke<
-      typeof evaluate,
-      [handler: Single, value: '"a b&c"', param: "query"]
-    >,
-    "=",
-    "a b&c"
-  >;
-
-  /** resolve is handed the deserialized value, the param and the index */
-  export type Resolves = Expect<
-    Invoke<
-      typeof evaluate,
-      [
-        handler: Invoke<
-          typeof verbosify,
-          [handler: typeof Number, property: "page"]
-        >,
-        value: "7",
-        param: "page",
-      ]
-    >,
-    "=",
-    7
-  >;
 }

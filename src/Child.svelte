@@ -2,10 +2,15 @@
   import { onDestroy } from "svelte";
   import { URLParameterize } from "../release";
 
-  /** A search whose query is written to the URL once typing pauses, under the key `q`, and whose tags are repeated entries. */
+  /**
+   * A search whose query is written to the URL once typing pauses, under the
+   * key `q`, whose tags are repeated entries, and whose tab is kept in the hash
+   * (`#tab=about`), so plain `#…` links switch it.
+   */
   export class Search {
     query = $state("");
     tags = $state<string[]>([]);
+    tab = $state<"home" | "about">("home");
 
     readonly url = URLParameterize<Search>(
       this,
@@ -16,6 +21,11 @@
           debounce: { idleMs: 50, maxWaitMs: 200 },
         },
         tags: { entries: "multiple", resolve: (query) => String(query) },
+        tab: {
+          in: "hash",
+          serialize: (tab) => tab,
+          resolve: (query) => (query === "about" ? "about" : "home"),
+        },
       },
       { onDestroy },
     );
@@ -34,6 +44,11 @@
 <ul>
   {#each search.tags as tag}<li>{tag}</li>{/each}
 </ul>
+<nav>
+  <a href="#tab=home">home</a>
+  <a href="#tab=about">about</a>
+</nav>
+<p>Showing {search.tab}, from #{search.url.key("tab")}</p>
 
 <!-- typing is written once it pauses, as one history entry -->
 {#snippet debouncesTyping(Child: typeof Self, test: Test)}
@@ -74,5 +89,27 @@
     expect(
       screen.getAllByRole("listitem").map((item) => item.textContent),
     ).toEqual(["svelte"]);
+  })}
+{/snippet}
+
+<!-- a #… link changes the hash, which fires hashchange: the tab follows it, and back again -->
+{#snippet followsHashLinks(Child: typeof Self, test: Test)}
+  <Child />
+  {test(async ({ expect, user, screen, waitFor }) => {
+    const tab = () => new URLSearchParams(location.hash.slice(1)).get("tab");
+    expect(tab()).toBe("home");
+    expect(screen.getByText("Showing home, from #tab")).toBeTruthy();
+
+    await user.click(screen.getByRole("link", { name: "about" }));
+    await waitFor(() =>
+      expect(screen.getByText("Showing about, from #tab")).toBeTruthy(),
+    );
+    expect(tab()).toBe("about");
+
+    history.back();
+    await waitFor(() =>
+      expect(screen.getByText("Showing home, from #tab")).toBeTruthy(),
+    );
+    expect(tab()).toBe("home");
   })}
 {/snippet}

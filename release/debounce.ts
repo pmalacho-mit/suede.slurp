@@ -59,9 +59,16 @@ export class MappedDebouncer<T> {
       this.maxTimers.set(key, window.setTimeout(flush, maxWaitMs));
   }
 
-  private flush(key: T) {
-    this.callbacks.get(key)?.();
+  /** The keys with a callback waiting to run. */
+  pending(): T[] {
+    return [...this.callbacks.keys()];
+  }
+
+  /** Runs `key`'s waiting callback now, if it has one. */
+  flush(key: T) {
+    const callback = this.callbacks.get(key);
     this.clear(key);
+    callback?.();
   }
 
   static ValidateConfig(config: Config) {

@@ -9,7 +9,13 @@ const libraries = ["suede.*/**"];
 export default defineConfig({
   plugins: [
     svelte(),
-    sweaterVest({ tsconfig: "tsconfig.app.json", exclude: libraries }),
+    sweaterVest({
+      tsconfig: "tsconfig.app.json",
+      exclude: libraries,
+      external: process.env.DESOLATE_EXTERNAL_5713
+        ? `http://localhost:${process.env.DESOLATE_EXTERNAL_5713}`
+        : undefined,
+    }),
   ],
   test: {
     expect: { requireAssertions: true },
