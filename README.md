@@ -50,7 +50,7 @@ Each handler is either a **resolve function** or a **verbose config object**.
 
 ```ts
 {
-  page: (query, param, index) => Number(query ?? 1)
+  page: (query, param, index) => Number(query ?? 1);
 }
 ```
 
@@ -91,18 +91,18 @@ A value that cannot be read (a `deserialize` or `resolve` that throws) is report
 
 #### Field reference
 
-| Field | Purpose |
-|---|---|
-| `resolve` | **Required.** Coerces the deserialized query into the property type. |
-| `serialize` | Value → string, or `undefined` to remove the parameter. Default `JSON.stringify`. |
-| `deserialize` | String → intermediate value. Default `JSON.parse`, falling back to the string itself (and `"undefined"` → `undefined`). |
-| `encode` / `decode` | An encoding of your own, on top of the URL's. Default: none. |
-| `key` | Override the URL parameter name (otherwise uses the property name). |
-| `history` | `"push"` creates a back-button entry per change; `"replace"` does not. |
-| `in` | The part of the URL the parameter is stored in: `"query"` (default) or `"hash"` — see below. |
-| `entries` | `"single"` (default) or `"multiple"` — see below. |
-| `debounce` | `false` disables; `{ idleMs, maxWaitMs }` overrides; `null` falls back to the global option. |
-| `previousKeys` | Migration from older URL key names — see below. |
+| Field               | Purpose                                                                                                                 |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `resolve`           | **Required.** Coerces the deserialized query into the property type.                                                    |
+| `serialize`         | Value → string, or `undefined` to remove the parameter. Default `JSON.stringify`.                                       |
+| `deserialize`       | String → intermediate value. Default `JSON.parse`, falling back to the string itself (and `"undefined"` → `undefined`). |
+| `encode` / `decode` | An encoding of your own, on top of the URL's. Default: none.                                                            |
+| `key`               | Override the URL parameter name (otherwise uses the property name).                                                     |
+| `history`           | `"push"` creates a back-button entry per change; `"replace"` does not.                                                  |
+| `in`                | The part of the URL the parameter is stored in: `"query"` (default) or `"hash"` — see below.                            |
+| `entries`           | `"single"` (default) or `"multiple"` — see below.                                                                       |
+| `debounce`          | `false` disables; `{ idleMs, maxWaitMs }` overrides; `null` falls back to the global option.                            |
+| `previousKeys`      | Migration from older URL key names — see below.                                                                         |
 
 ### Multiple-entry parameters (arrays)
 
@@ -123,12 +123,15 @@ Second-tier defaults applied to every handler in the call:
 
 ```ts
 URLParameterize(this, handlers, {
-  prefix: () => "app_",          // string | () => string. Prepended to every key.
-  onDestroy,                     // Svelte's onDestroy — auto-wires cleanup.
+  prefix: () => "app_", // string | () => string. Prepended to every key.
+  onDestroy, // Svelte's onDestroy — auto-wires cleanup.
   debounce: { idleMs: 200, maxWaitMs: 800 },
   history: "replace",
-  in: "hash",                    // every parameter in the hash, but for handlers that say otherwise
-  encode, decode, serialize, deserialize,
+  in: "hash", // every parameter in the hash, but for handlers that say otherwise
+  encode,
+  decode,
+  serialize,
+  deserialize,
 });
 ```
 
@@ -157,7 +160,9 @@ Following a `#…` link, assigning `location.hash`, or editing the hash in the a
 
 ```ts
 window.addEventListener("hashchange", () => {
-  const tab = new URLSearchParams(location.hash.slice(1)).get(model.url.key("tab"));
+  const tab = new URLSearchParams(location.hash.slice(1)).get(
+    model.url.key("tab"),
+  );
 });
 ```
 
@@ -172,7 +177,7 @@ URL writes can be coalesced per-parameter:
 
 Pending writes are flushed on `visibilitychange`, `pagehide`, and `beforeunload`, so leaving the page never drops state.
 
-A debounced change made in the same action as other changes is not held back: it is written at once, in the same history entry as the rest. One still waiting when a later change is written goes first, in an entry of its own, so history keeps the order things were done in. Back, forward, or a hash change drops writes still waiting: they were made on the entry the browser left, so each such property is read again from the URL it arrived at.
+A debounced change made in the same action as other changes is not held back: it is written at once, in the same history entry as the rest. One still waiting when a later change is written goes first, in an entry of its own, so history keeps the order things were done in. Back and forward drop writes still waiting: they were made on the entry the browser left, so each such property is read again from the URL it arrived at. A link followed in the meantime (`#…`) adds an entry instead, and they are written to it. (Telling the two apart relies on `history.length`, which most browsers stop growing at 50 entries; past that, a link is taken for Back, and drops them.)
 
 Per-handler `debounce` overrides the global option. Set `debounce: false` on a handler to opt out when a global is configured.
 
@@ -192,6 +197,7 @@ Used when renaming a URL parameter without breaking links already in the wild:
 ```
 
 On mount, for each entry whose old key is in the URL:
+
 - `apply` (default `true`) — if the old key is present, read its value into the property.
 - `remove` (default `true`) — strip the old key from the URL.
 - `behavior` (default `"replace"`) — history mode used to strip.
@@ -215,8 +221,12 @@ The `URLParameterize` namespace re-exports the relevant types:
 ```ts
 import type { URLParameterize as UP } from "...";
 
-const handlers: UP.Handlers<Model> = { /* ... */ };
-const options: UP.Options = { /* ... */ };
+const handlers: UP.Handlers<Model> = {
+  /* ... */
+};
+const options: UP.Options = {
+  /* ... */
+};
 const ret: UP.Return = model.url;
 ```
 
@@ -233,24 +243,33 @@ limits a large app is the URL itself:
   large values (documents, code, long lists) `in: "hash"`, which is never sent,
   or shrink them with your own `encode`/`decode`.
 - **Rate.** Browsers limit how often a page may call `pushState` and
-  `replaceState`; Safari, for one, throws after 100 calls in 30 seconds. Each
-  change to a tracked property is one call, so a text field written on every
-  keystroke can reach the limit while someone types. Give text fields a
-  `debounce`.
+  `replaceState`; Safari, for one, throws after 100 calls in 30 seconds. One
+  action is one call, however many properties it changes, but a text field
+  written on every keystroke can still reach the limit while someone types.
+  Give text fields a `debounce`.
 - **History.** Whatever one action changes (one event handler, one tick) is
   one history entry, however many properties and tracked objects it touches,
   so a "reset" button takes one press of Back to undo. Changes made in separate
   ticks (either side of an `await`, say) are separate entries. Use
   `history: "replace"` for properties that are not navigation.
 
+The URL is written at the end of the tick a change is made in, so code that
+reads `location` right after a change sees it once that tick is over: after
+`await tick()`, say. Code that calls `pushState` or `replaceState` sooner gets
+the change written first.
+
 ## Caveats
 
 - Requires a browser environment with the History API. Outside a browser (SSR) importing and calling it is safe and does nothing; in a browser without the History API it logs an error and does nothing. The returned `cleanup`/`prefix` functions are always safe to call.
-- Every tracked property must have a unique fully-qualified key (prefix + key), across the query and the hash together. Conflicting registrations throw on mount — use distinct `key` overrides or distinct prefixes.
+- Every tracked property must have a unique fully-qualified key (prefix + key), across the query and the hash together. Conflicting registrations throw on mount, and leave nothing behind — use distinct `key` overrides or distinct prefixes. Two instances of one model alive at once conflict too, as during an outro transition, when the old component is still there as the new one mounts: give them distinct prefixes.
+- `cleanup` removes the parameters only while the URL's path is the one they were written on. A router that navigates to another page and then unmounts the old one leaves the new page's parameters alone.
+- Changes the app makes on its own (data loaded after mount, say) are written as any other, with an entry each. Chrome's Back button skips entries a page added without the user having interacted with it, so give such properties `history: "replace"`.
 - The utility remembers, per parameter, what the URL last held and what the property was last synced at, so `resolve` runs only when a parameter's value in the URL changes, and the URL is written only when a property's value changes. A URL value written differently from how it would be serialized (by hand, or by an older version) is read, but not rewritten until the property changes.
 - Links written by versions that percent-encoded values twice still read with the default `deserialize`.
 
 ## Tests
+
+Everything it must do is listed in [REQUIREMENTS.md](https://github.com/pmalacho-mit/suede.slurp/blob/main/REQUIREMENTS.md), on the main branch, each requirement with the tests that show it.
 
 The modules carry their tests as [namespace tests](https://github.com/pmalacho-mit/suede.nests): `declare namespace` blocks of types beside the code they test, which a Vite plugin turns into Vitest tests (and which a build erases). They import the DSL through `../suede.nests.slurp`, which installing this dependency puts beside it.
 

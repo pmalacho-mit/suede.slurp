@@ -4,14 +4,27 @@ import type {
   Invoke,
   Throws,
 } from "../suede.nests.slurp/dsl.import.meta.vitest.ts";
-import type { count, keys, session, text } from "./_internal/harness.svelte";
+import type {
+  afterConflict,
+  count,
+  historyState,
+  keys,
+  object,
+  rendered,
+  session,
+  strict,
+  text,
+  writes,
+} from "./_internal/harness.svelte";
 import { untrack } from "svelte";
 import { isBrowser, resolve, supportsHistory } from "./utils";
 import { MappedDebouncer } from "./debounce";
 import {
   type Options,
   type ParameterHandlers,
+  type URLPart,
   type UpdateHistoryBehavior,
+  type AnyParameterHandler,
   defaults,
   keyOf,
   parameterize,
@@ -29,10 +42,22 @@ import {
 export type { Options, ParameterHandler, ParameterHandlers } from "./handlers";
 export { defaults } from "./handlers";
 
+/**
+ * Set on `history` once it is patched, by whichever copy of this module got
+ * there first (a hot reload, or two versions in one bundle), so that it is
+ * patched once and every copy hears the same announcements.
+ */
+const patched = Symbol.for("URLParameterize.patched");
+
 const URLChangeEvent = {
   key: "urlchange",
 
-  emit: () => window.dispatchEvent(new CustomEvent(URLChangeEvent.key)),
+  /** Fired before pushState or replaceState changes the URL. */
+  before: "urlchange:before",
+
+  /** Announces the URL the browser moved to (a `detail` of "history": changed by pushState or replaceState). */
+  emit: (detail?: "history") =>
+    window.dispatchEvent(new CustomEvent(URLChangeEvent.key, { detail })),
 
   setupComplete: false,
 
@@ -41,24 +66,29 @@ const URLChangeEvent = {
     if (URLChangeEvent.setupComplete) return true;
     if (!supportsHistory) return false;
 
-    const { pushState, replaceState } = history;
+    if (!(patched in history)) {
+      const announce = (change: History["pushState"]) =>
+        function (this: History, ...args: Parameters<History["pushState"]>) {
+          window.dispatchEvent(new CustomEvent(URLChangeEvent.before));
+          change.apply(this, args);
+          URLChangeEvent.emit("history");
+        };
+      history.pushState = announce(history.pushState);
+      history.replaceState = announce(history.replaceState);
+      Object.defineProperty(history, patched, { value: true });
+    }
 
-    history.pushState = function (...args) {
-      pushState.apply(this, args);
-      URLChangeEvent.emit();
-    };
-
-    history.replaceState = function (...args) {
-      replaceState.apply(this, args);
-      URLChangeEvent.emit();
-    };
-
+    // Changes still waiting for the end of this tick were made before the
+    // call: they go first, so that history keeps the order of things.
+    window.addEventListener(URLChangeEvent.before, settle);
+    window.addEventListener(URLChangeEvent.key, moved);
     window.addEventListener("popstate", traversed);
     // Changing the hash (a `#…` link, `location.hash = …`, or editing it by hand)
     // fires `hashchange`. Browsers fire `popstate` too, but not all have, and a
     // second announcement of the same URL reads nothing new.
     window.addEventListener("hashchange", traversed);
 
+    entries = history.length;
     return (URLChangeEvent.setupComplete = true);
   },
 
@@ -73,40 +103,82 @@ const URLChangeEvent = {
 
 const registry = new Registry();
 
+/** `history.length` when the URL last changed: a hash change that grows it added an entry. */
+let entries = 0;
+/** The URL the browser last arrived at, so that its second announcement (`popstate`, then `hashchange`) is not taken for another move. */
+let arrived: string | undefined;
+
+const moved = (event: Event) => {
+  if ((event as CustomEvent).detail !== "history") return;
+  entries = history.length;
+  arrived = undefined;
+};
+
 /**
- * The browser moved to another URL (back, forward, a hash change): edits still
- * waiting out their debounce belong to the entry it left, so they are dropped,
- * and the parameters they were for are read again from the URL it arrived at.
+ * The browser moved to another URL, which pushState and replaceState do not
+ * announce. Back and forward move between entries, and edits still waiting
+ * out their debounce belong to the entry left: they are dropped, and the
+ * parameters they were for are read again from the URL arrived at. A link
+ * (`#…`) adds an entry instead, and they stay waiting, to be written to it.
+ * Past its cap (50 entries in most browsers) `history.length` stops growing,
+ * and a link is then taken for a move between entries.
  */
 const traversed = () => {
-  for (const param of debouncer?.pending() ?? []) {
-    debouncer!.clear(param);
-    registry.invalidate(param);
+  if (location.href !== arrived) {
+    arrived = location.href;
+    const added = history.length > entries;
+    entries = history.length;
+    if (!added)
+      for (const param of debouncer?.pending() ?? []) {
+        debouncer!.clear(param);
+        registry.invalidate(param);
+      }
   }
   URLChangeEvent.emit();
 };
 
 /**
- * What the changes made so far in this tick (one event handler's, one flush of
- * effects) did to history. Whatever one action changes goes in one entry: the
- * first change that pushes makes it, and the rest of the tick amend it.
+ * The changes made in this tick (one event handler's, one flush of effects),
+ * to be written at its end, as one call to the History API: whatever one
+ * action changes is one history entry, however many properties it touches.
  */
 type Tick = {
-  pushed: boolean;
-  /** parameters whose debounced writes were queued this tick, before the entry was made */
+  changes: Changes;
+  push: boolean;
+  /** parameters whose debounced writes were queued this tick */
   fresh: Set<string>;
 };
 let tick: Tick | undefined;
 const thisTick = () => {
   if (!tick) {
-    tick = { pushed: false, fresh: new Set() };
-    queueMicrotask(() => (tick = undefined));
+    tick = { changes: {}, push: false, fresh: new Set() };
+    queueMicrotask(settle);
   }
   return tick;
 };
 
-/** Where `record` collects changes instead of committing them, while `take` runs. */
-let collecting: { changes: Changes; push: boolean } | undefined;
+/** Writes this tick's changes to the URL, now. */
+const settle = () => {
+  const now = tick;
+  if (!now) return;
+  tick = undefined;
+  if (now.push) {
+    // Edits still waiting from before this tick were made first: they get an
+    // entry of their own, ahead of this one. Those from this tick join it.
+    const earlier = take((param) => !now.fresh.has(param));
+    URLChangeEvent.commit(earlier.changes, earlier.push ? "push" : "replace");
+    merge(now.changes, take((param) => now.fresh.has(param)).changes);
+  }
+  URLChangeEvent.commit(now.changes, now.push ? "push" : "replace");
+};
+
+/** Drops a change to `param` not yet written: it is leaving the URL, or moving. */
+const forget = (param: string, part: URLPart) => {
+  delete tick?.changes[part]?.[param];
+};
+
+/** Where `record` collects changes instead, while `take` runs. */
+let collecting: Pick<Tick, "changes" | "push"> | undefined;
 
 /** Runs the debounced writes `which` picks now, and returns what they change, uncommitted. */
 const take = (which: (param: string) => boolean) => {
@@ -120,24 +192,11 @@ const take = (which: (param: string) => boolean) => {
   return taken;
 };
 
-/** Writes `changes` to the URL as `behavior` asks, in this tick's history entry. */
+/** Adds `changes` to what this tick writes to the URL. */
 const record = (changes: Changes, behavior: UpdateHistoryBehavior) => {
-  if (collecting) {
-    merge(collecting.changes, changes);
-    collecting.push ||= behavior === "push";
-    return;
-  }
-  const now = thisTick();
-  if (behavior === "replace" || now.pushed)
-    return URLChangeEvent.commit(changes, "replace");
-  // Edits still waiting from before this tick were made first: they get an
-  // entry of their own, ahead of this one. Those from this tick join it.
-  const earlier = take((param) => !now.fresh.has(param));
-  URLChangeEvent.commit(earlier.changes, earlier.push ? "push" : "replace");
-  const joining = take((param) => now.fresh.has(param));
-  merge(changes, joining.changes);
-  now.pushed = true;
-  URLChangeEvent.commit(changes, "push");
+  const into = collecting ?? thisTick();
+  merge(into.changes, changes);
+  into.push ||= behavior === "push";
 };
 
 /** The current URL's parameters, parsed once however many objects and parameters read them. */
@@ -240,7 +299,19 @@ const URLParameterize = <
     };
   }
 
+  // Every key is checked before any is taken, so that a conflict leaves nothing behind.
+  const verbose = new Map<Key, AnyParameterHandler>();
+  for (const key in handlers)
+    verbose.set(key as Key, verbosify(handlers[key]!, key, options));
+  const params = [...verbose.values()].map((handler) => handler.key);
+  params.forEach((param, index) => {
+    if (registry.has(param) || params.indexOf(param) !== index)
+      throw new Error(`URL parameter key conflict detected: "${param}"`);
+  });
+
   const paramByKey = new Map<Key, string>();
+  /** The path the parameters were last written on: once the URL is another page's, they are not this instance's to remove. */
+  let path = location.pathname;
   /** Bumped when the parameters move, so that `key` is reactive. */
   let moves = $state(0);
   const value = (key: Key) => (target as Record<string, unknown>)[key];
@@ -265,12 +336,13 @@ const URLParameterize = <
       untrack(() => value(key)),
       handler,
     );
-    if (registry.write(param, encoded))
-      record({ [handler.in]: { [param]: encoded } }, behavior);
+    if (!registry.write(param, encoded)) return;
+    record({ [handler.in]: { [param]: encoded } }, behavior);
+    path = location.pathname;
   };
 
   const setup = (key: Key) => {
-    const handler = verbosify(handlers[key]!, key, options);
+    const handler = verbose.get(key)!;
     registry.register(handler);
     paramByKey.set(key, handler.key);
 
@@ -300,7 +372,7 @@ const URLParameterize = <
         first = false;
         write(key, "replace");
       } else if (!debounce) write(key, handler.history);
-      else if (thisTick().pushed)
+      else if (thisTick().push)
         // this tick's change already has an entry: it goes in with the rest
         write(key, handler.history);
       else if (registry.synced(param, encoded))
@@ -331,6 +403,7 @@ const URLParameterize = <
       renames.map(({ key, from }) => {
         debouncer?.clear(from);
         const handler = registry.handler(from)!;
+        forget(from, handler.in);
         (changes[handler.in] ??= {})[from] = undefined;
         registry.unregister(from);
         return [key, handler] as const;
@@ -341,12 +414,16 @@ const URLParameterize = <
       handler.key = to;
       registry.register(handler);
       paramByKey.set(key, to);
-      const encoded = parameterize(value(key), handler);
+      const encoded = parameterize(
+        untrack(() => value(key)),
+        handler,
+      );
       registry.write(to, encoded);
       (changes[handler.in] ??= {})[to] = encoded;
     }
     moves++;
     URLChangeEvent.commit(changes, "replace");
+    path = location.pathname;
   };
 
   const trySetupPrefixEffect = () => {
@@ -369,11 +446,14 @@ const URLParameterize = <
     for (const param of paramByKey.values()) {
       debouncer?.clear(param);
       const handler = registry.handler(param);
-      if (handler) (removals[handler.in] ??= {})[param] = undefined;
+      if (handler) {
+        forget(param, handler.in);
+        (removals[handler.in] ??= {})[param] = undefined;
+      }
       registry.unregister(param);
     }
     paramByKey.clear();
-    URLChangeEvent.commit(removals, "replace");
+    if (location.pathname === path) URLChangeEvent.commit(removals, "replace");
   };
 
   const cleanup = $effect.root(() => {
@@ -1223,6 +1303,544 @@ declare namespace URLParameterize {
     >,
     "=",
     [{ query: "a_q"; page: "a_page" }, { query: "b_q"; page: "b_page" }]
+  >;
+
+  // Mounting, and what one action writes
+
+  /** every initial value is written at mount in one call to the History API */
+  export type MountsInOneCall = Expect<
+    Invoke<
+      typeof writes,
+      [
+        scenario: {
+          url: '?a="from-url"';
+          initial: { a: "x"; b: "y"; c: "z" };
+          handlers: { a: typeof text; b: typeof text; c: typeof text };
+        },
+      ]
+    >,
+    "=",
+    [1]
+  >;
+
+  /** an action that changes several properties is one call to the History API */
+  export type OneActionOneCall = Expect<
+    Invoke<
+      typeof writes,
+      [
+        scenario: {
+          initial: { a: "x"; b: "y"; c: "z" };
+          handlers: { a: typeof text; b: typeof text; c: typeof text };
+          steps: [{ set: { a: "1"; b: "2"; c: "3" } }];
+        },
+      ]
+    >,
+    "=",
+    [1, 1]
+  >;
+
+  /** assigning a property the value it has writes nothing */
+  export type UnchangedNotWritten = Expect<
+    Invoke<
+      typeof writes,
+      [
+        scenario: {
+          initial: { q: "init" };
+          handlers: { q: typeof text };
+          steps: [{ set: { q: "init" } }];
+        },
+      ]
+    >,
+    "=",
+    [1, 0]
+  >;
+
+  /** one action that changes objects tracked side by side is one history entry too */
+  export type SideBySideOneEntry = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          beside: [
+            { initial: { other: "x" }; handlers: { other: typeof text } },
+          ];
+          initial: { q: "init" };
+          handlers: { q: typeof text };
+          steps: [{ set: { q: "a" }; beside: { other: "y" } }, { back: true }];
+        },
+      ]
+    >,
+    "=",
+    [
+      {
+        url: { other: '"x"'; q: '"init"' };
+        entries: 0;
+        values: { q: "init" };
+        errors: 0;
+      },
+      {
+        url: { other: '"y"'; q: '"a"' };
+        entries: 1;
+        values: { q: "a" };
+        errors: 0;
+      },
+      {
+        url: { other: '"x"'; q: '"init"' };
+        entries: 1;
+        values: { q: "init" };
+        errors: 0;
+      },
+    ]
+  >;
+
+  /** changing what a property holds (pushing onto its array, assigning into its object) is written too */
+  export type WritesDeepChanges = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          initial: { tags: ["a"]; filter: { min: 1; max: 5 } };
+          handlers: {
+            tags: { entries: "multiple"; resolve: typeof text };
+            filter: typeof object;
+          };
+          steps: [
+            { append: { tags: "b" } },
+            { merge: { filter: { max: 9 } } },
+            { back: true },
+          ];
+        },
+      ]
+    >,
+    "=",
+    [
+      {
+        url: { tags: '"a"'; filter: '{"min":1,"max":5}' };
+        entries: 0;
+        values: { tags: ["a"]; filter: { min: 1; max: 5 } };
+        errors: 0;
+      },
+      {
+        url: { tags: ['"a"', '"b"']; filter: '{"min":1,"max":5}' };
+        entries: 1;
+        values: { tags: ["a", "b"]; filter: { min: 1; max: 5 } };
+        errors: 0;
+      },
+      {
+        url: { tags: ['"a"', '"b"']; filter: '{"min":1,"max":9}' };
+        entries: 2;
+        values: { tags: ["a", "b"]; filter: { min: 1; max: 9 } };
+        errors: 0;
+      },
+      {
+        url: { tags: ['"a"', '"b"']; filter: '{"min":1,"max":5}' };
+        entries: 2;
+        values: { tags: ["a", "b"]; filter: { min: 1; max: 5 } };
+        errors: 0;
+      },
+    ]
+  >;
+
+  /** code that pushes a URL in the same action as a change goes after it: the change keeps an entry of its own */
+  export type OthersGoAfter = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          initial: { q: "init" };
+          handlers: { q: typeof text };
+          steps: [{ set: { q: "a" }; thenNavigate: '?q="b"' }, { back: true }];
+        },
+      ]
+    >,
+    "=",
+    [
+      { url: { q: '"init"' }; entries: 0; values: { q: "init" }; errors: 0 },
+      { url: { q: '"b"' }; entries: 2; values: { q: "b" }; errors: 0 },
+      { url: { q: '"a"' }; entries: 2; values: { q: "a" }; errors: 0 },
+    ]
+  >;
+
+  /** replacing an entry keeps the history state other code (a router) keeps there */
+  export type KeepsHistoryState = Expect<
+    Invoke<
+      typeof historyState,
+      [
+        scenario: {
+          initial: { q: "init" };
+          handlers: { q: { resolve: typeof text; history: "replace" } };
+          steps: [
+            { navigate: "?other=1"; state: { page: 1 } },
+            { set: { q: "a" } },
+          ];
+        },
+      ]
+    >,
+    "=",
+    [null, { page: 1 }, { page: 1 }]
+  >;
+
+  // Reading
+
+  /** one entry of several that cannot be read leaves the whole property as it was, and nothing is written back */
+  export type ReadsEntriesAtomically = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          initial: { nums: [1, 2, 3] };
+          handlers: { nums: { entries: "multiple"; resolve: typeof strict } };
+          steps: [{ navigate: "?nums=7&nums=x&nums=9" }];
+        },
+      ]
+    >,
+    "=",
+    [
+      {
+        url: { nums: ["1", "2", "3"] };
+        entries: 0;
+        values: { nums: [1, 2, 3] };
+        errors: 0;
+      },
+      {
+        url: { nums: ["7", "x", "9"] };
+        entries: 1;
+        values: { nums: [1, 2, 3] };
+        errors: 1;
+      },
+    ]
+  >;
+
+  /** an array read from the URL is assigned, so markup sees it whether the property is $state or $state.raw */
+  export type ReadsIntoRawState = [
+    Expect<
+      Invoke<
+        typeof rendered,
+        [
+          scenario: {
+            raw: true;
+            initial: { tags: ["a"] };
+            handlers: { tags: { entries: "multiple"; resolve: typeof text } };
+            steps: [
+              { navigate: '?tags="x"&tags="y"' },
+              { set: { tags: ["z"] } },
+              { back: true },
+            ];
+          },
+        ]
+      >,
+      "=",
+      [[["a"]], [["x", "y"]], [["z"]], [["x", "y"]]]
+    >,
+  ];
+
+  // Debouncing
+
+  /** the options' debounce applies to every handler, and debounce: false opts one out */
+  export type GlobalDebounce = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          initial: { a: "a0"; b: "b0" };
+          handlers: {
+            a: typeof text;
+            b: { resolve: typeof text; debounce: false };
+          };
+          options: { debounce: { idleMs: 20; maxWaitMs: 200 } };
+          steps: [{ set: { b: "b1" } }, { set: { a: "a1" } }, { wait: 80 }];
+        },
+      ]
+    >,
+    "=",
+    [
+      {
+        url: { a: '"a0"'; b: '"b0"' };
+        entries: 0;
+        values: { a: "a0"; b: "b0" };
+        errors: 0;
+      },
+      {
+        url: { a: '"a0"'; b: '"b1"' };
+        entries: 1;
+        values: { a: "a0"; b: "b1" };
+        errors: 0;
+      },
+      {
+        url: { a: '"a0"'; b: '"b1"' };
+        entries: 1;
+        values: { a: "a1"; b: "b1" };
+        errors: 0;
+      },
+      {
+        url: { a: '"a1"'; b: '"b1"' };
+        entries: 2;
+        values: { a: "a1"; b: "b1" };
+        errors: 0;
+      },
+    ]
+  >;
+
+  /** a debounced change undone before it is written writes nothing */
+  export type UndoneBeforeWritten = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          initial: { q: "init" };
+          handlers: {
+            q: {
+              resolve: typeof text;
+              debounce: { idleMs: 20; maxWaitMs: 200 };
+            };
+          };
+          steps: [{ set: { q: "a" } }, { set: { q: "init" } }, { wait: 80 }];
+        },
+      ]
+    >,
+    "=",
+    [
+      { url: { q: '"init"' }; entries: 0; values: { q: "init" }; errors: 0 },
+      { url: { q: '"init"' }; entries: 0; values: { q: "a" }; errors: 0 },
+      { url: { q: '"init"' }; entries: 0; values: { q: "init" }; errors: 0 },
+      { url: { q: '"init"' }; entries: 0; values: { q: "init" }; errors: 0 },
+    ]
+  >;
+
+  /** a link (#…) followed while a debounced change waits keeps it: it is written to the entry the link added */
+  export type LinkKeepsWaitingChange = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          initial: { q: "init" };
+          handlers: {
+            q: {
+              resolve: typeof text;
+              debounce: { idleMs: 20; maxWaitMs: 200 };
+            };
+          };
+          steps: [{ set: { q: "typed" } }, { hash: "section" }, { wait: 80 }];
+        },
+      ]
+    >,
+    "=",
+    [
+      { url: { q: '"init"' }; entries: 0; values: { q: "init" }; errors: 0 },
+      { url: { q: '"init"' }; entries: 0; values: { q: "typed" }; errors: 0 },
+      {
+        url: { q: '"init"'; "#section": "" };
+        entries: 1;
+        values: { q: "typed" };
+        errors: 0;
+      },
+      {
+        url: { q: '"typed"'; "#section": "" };
+        entries: 2;
+        values: { q: "typed" };
+        errors: 0;
+      },
+    ]
+  >;
+
+  /** leaving the page writes a debounced change at once */
+  export type LeavingWrites = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          initial: { q: "init" };
+          handlers: {
+            q: {
+              resolve: typeof text;
+              debounce: { idleMs: 20; maxWaitMs: 200 };
+            };
+          };
+          steps: [{ set: { q: "a" } }, { dispatch: "pagehide" }];
+        },
+      ]
+    >,
+    "=",
+    [
+      { url: { q: '"init"' }; entries: 0; values: { q: "init" }; errors: 0 },
+      { url: { q: '"init"' }; entries: 0; values: { q: "a" }; errors: 0 },
+      { url: { q: '"a"' }; entries: 1; values: { q: "a" }; errors: 0 },
+    ]
+  >;
+
+  /** a debounced change waiting when the prefix moves is written under the new key, and the old key is not brought back */
+  export type PrefixTakesWaitingChange = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          initial: { q: "init" };
+          handlers: {
+            q: {
+              resolve: typeof text;
+              debounce: { idleMs: 20; maxWaitMs: 200 };
+            };
+          };
+          steps: [{ set: { q: "a" } }, { prefix: "v2_" }, { wait: 80 }];
+        },
+      ]
+    >,
+    "=",
+    [
+      { url: { q: '"init"' }; entries: 0; values: { q: "init" }; errors: 0 },
+      { url: { q: '"init"' }; entries: 0; values: { q: "a" }; errors: 0 },
+      { url: { v2_q: '"a"' }; entries: 0; values: { q: "a" }; errors: 0 },
+      { url: { v2_q: '"a"' }; entries: 0; values: { q: "a" }; errors: 0 },
+    ]
+  >;
+
+  // Cleaning up
+
+  /** cleanup drops a change not yet written, whether waiting out a debounce or made in the same action; calling it again does nothing */
+  export type CleanupDropsWaitingChanges = [
+    Expect<
+      Invoke<
+        typeof session,
+        [
+          scenario: {
+            initial: { q: "init" };
+            handlers: {
+              q: {
+                resolve: typeof text;
+                debounce: { idleMs: 20; maxWaitMs: 200 };
+              };
+            };
+            steps: [
+              { set: { q: "a" } },
+              { cleanup: true },
+              { wait: 80 },
+              { cleanup: true },
+            ];
+          },
+        ]
+      >,
+      "=",
+      [
+        { url: { q: '"init"' }; entries: 0; values: { q: "init" }; errors: 0 },
+        { url: { q: '"init"' }; entries: 0; values: { q: "a" }; errors: 0 },
+        { url: {}; entries: 0; values: { q: "a" }; errors: 0 },
+        { url: {}; entries: 0; values: { q: "a" }; errors: 0 },
+        { url: {}; entries: 0; values: { q: "a" }; errors: 0 },
+      ]
+    >,
+  ];
+
+  /** cleanup made in the same action as a change: nothing is written, and no entry is added */
+  export type CleanupInTheSameAction = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          initial: { q: "init" };
+          handlers: { q: typeof text };
+          steps: [{ set: { q: "a" }; thenCleanup: true }];
+        },
+      ]
+    >,
+    "=",
+    [
+      { url: { q: '"init"' }; entries: 0; values: { q: "init" }; errors: 0 },
+      { url: {}; entries: 0; values: { q: "a" }; errors: 0 },
+    ]
+  >;
+
+  /** cleanup once the URL is another page's (a router navigated, then unmounted) leaves that page's parameters alone */
+  export type CleanupLeavesOtherPages = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          initial: { q: "init" };
+          handlers: { q: typeof text };
+          steps: [{ navigate: '/elsewhere?q="theirs"' }, { cleanup: true }];
+        },
+      ]
+    >,
+    "=",
+    [
+      { url: { q: '"init"' }; entries: 0; values: { q: "init" }; errors: 0 },
+      {
+        url: { q: '"theirs"' };
+        entries: 1;
+        values: { q: "theirs" };
+        errors: 0;
+      },
+      {
+        url: { q: '"theirs"' };
+        entries: 1;
+        values: { q: "theirs" };
+        errors: 0;
+      },
+    ]
+  >;
+
+  // Conflicts
+
+  /** a conflict on mount leaves nothing behind: once the holder is cleaned up, every key is free */
+  export type ConflictLeavesNothing = Expect<
+    Invoke<
+      typeof afterConflict,
+      [
+        scenario: {
+          holder: { initial: { b: "x" }; handlers: { b: typeof text } };
+          conflicting: {
+            initial: { a: "y"; b: "y" };
+            handlers: { a: typeof text; b: typeof text };
+          };
+          retry: { initial: { a: "z" }; handlers: { a: typeof text } };
+        },
+      ]
+    >,
+    "=",
+    {
+      error: 'URL parameter key conflict detected: "b"';
+      retried: { a: '"z"' };
+    }
+  >;
+
+  /** two properties of one object stored under the same key conflict too */
+  export type ConflictsWithinACall = Throws<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          initial: { a: "x"; b: "y" };
+          handlers: {
+            a: { resolve: typeof text; key: "q" };
+            b: { resolve: typeof text; key: "q" };
+          };
+        },
+      ]
+    >,
+    'URL parameter key conflict detected: "q"'
+  >;
+
+  // Migration
+
+  /** an old key removed with behavior: "push" is removed in a history entry of its own */
+  export type MigratesWithAnEntry = Expect<
+    Invoke<
+      typeof session,
+      [
+        scenario: {
+          url: '?greeting="hi"';
+          initial: { hello: "x" };
+          handlers: {
+            hello: {
+              resolve: typeof text;
+              previousKeys: [{ fullname: "greeting"; behavior: "push" }];
+            };
+          };
+        },
+      ]
+    >,
+    "=",
+    [{ url: { hello: '"hi"' }; entries: 1; values: { hello: "hi" }; errors: 0 }]
   >;
 }
 

@@ -18,9 +18,21 @@ export const text = (query: unknown) =>
 export const count = (query: unknown) =>
   typeof query === "number" ? query : 0;
 
+/** A resolver for objects: anything that is not one is {}. */
+export const object = (query: unknown) =>
+  typeof query === "object" && query !== null ? query : {};
+
+/** A resolver that throws for anything that is not a number. */
+export const strict = (query: unknown) => {
+  if (typeof query !== "number") throw new Error(`not a number: ${query}`);
+  return query;
+};
+
 type Instance = {
   /** the tracked object's properties, made `$state` */
   initial: Record<string, unknown>;
+  /** each property `$state.raw` instead: assigning one is seen, changing what it holds is not */
+  raw?: true;
   handlers: Record<string, ParameterHandler<any>>;
   options?: Options;
 };
@@ -36,10 +48,24 @@ export type Scenario = Instance & {
 };
 
 export type Step =
-  /** assign to the tracked object */
-  | { set: Record<string, unknown> }
-  /** push a URL with this search, as a link or other code would */
-  | { navigate: string }
+  /** assign to the tracked object: one action, with whatever else the step names */
+  | {
+      set: Record<string, unknown>;
+      /** in the same action, assign to the first object tracked beside it */
+      beside?: Record<string, unknown>;
+      /** then, in the same action, push this URL, as code reacting to the change would */
+      thenNavigate?: string;
+      /** then, in the same action, call `cleanup` */
+      thenCleanup?: true;
+    }
+  /** push a value onto each of these array properties, changing the array the property holds */
+  | { append: Record<string, unknown> }
+  /** assign into each of these object properties, changing the object the property holds */
+  | { merge: Record<string, Record<string, unknown>> }
+  /** push a URL (a path and a search, or a search alone), as a link or other code would, with this history state */
+  | { navigate: string; state?: unknown }
+  /** fire this event on `window`, as the browser does when the page is hidden or left */
+  | { dispatch: "visibilitychange" | "pagehide" | "beforeunload" }
   /** set `location.hash`, as a `#…` link or someone editing the address bar would, and wait for `hashchange` */
   | {
       hash: string;
@@ -127,6 +153,27 @@ const traverse = async (direction: "back" | "forward") => {
 
 type Tracked = ReturnType<typeof URLParameterize<Record<string, any>>>;
 
+/** A `$state.raw` property, for `Object.defineProperty`. */
+const rawProperty = (initial: unknown) => {
+  let value = $state.raw(initial);
+  return {
+    get: () => value,
+    set: (next: unknown) => void (value = next),
+    enumerable: true,
+  };
+};
+
+const targetOf = ({ initial, raw }: Instance) => {
+  if (!raw) {
+    const target: Record<string, any> = $state({ ...initial });
+    return target;
+  }
+  const target: Record<string, any> = {};
+  for (const [key, value] of Object.entries(initial))
+    Object.defineProperty(target, key, rawProperty(value));
+  return target;
+};
+
 /**
  * Tracks `scenario.initial` with URLParameterize in a URL whose search (and
  * hash) is `scenario.url`, then plays the steps. Returns what `observe` saw
@@ -140,10 +187,13 @@ const play = async <Seen>(
     start: number;
     errors: number;
   }) => Seen,
+  /** called once the URL is set, before anything is tracked */
+  prepare?: () => void,
 ): Promise<Seen[]> => {
   // pushed, not replaced: it drops any forward entries an earlier session left,
   // so that history.length counts the entries this one adds
   history.pushState(null, "", `/${scenario.url ?? ""}`);
+  prepare?.();
   const start = history.length;
   const errors = vi.spyOn(console, "error").mockImplementation(() => {});
   const cleanups: (() => void)[] = [];
@@ -153,14 +203,18 @@ const play = async <Seen>(
     history.replaceState(null, "", "/");
   });
 
-  const track = ({ initial, handlers, options }: Instance) => {
-    const target: Record<string, any> = $state({ ...initial });
-    const tracked = URLParameterize(target, handlers, options);
+  const track = (instance: Instance) => {
+    const target = targetOf(instance);
+    const tracked = URLParameterize(
+      target,
+      instance.handlers,
+      instance.options,
+    );
     cleanups.push(tracked.cleanup);
     return { target, tracked };
   };
 
-  for (const instance of scenario.beside ?? []) track(instance);
+  const beside = (scenario.beside ?? []).map(track);
 
   let prefix = $state(scenario.prefixState ?? "");
   const { target, tracked } = track({
@@ -171,8 +225,11 @@ const play = async <Seen>(
         : { ...scenario.options, prefix: () => prefix },
   });
 
-  const look = () => {
+  // Effects run, and the tick ends, as it would after a click or a keystroke:
+  // its changes are written to the URL then, and each step is a tick of its own.
+  const look = async () => {
     flushSync();
+    await Promise.resolve();
     return observe({
       target,
       tracked,
@@ -181,13 +238,28 @@ const play = async <Seen>(
     });
   };
 
-  const observations = [look()];
+  const observations = [await look()];
   for (const step of scenario.steps ?? []) {
-    // each step a separate action, as a click or a keystroke is: in a tick of its own
-    await Promise.resolve();
-    if ("set" in step) Object.assign(target, step.set);
+    if ("set" in step) {
+      Object.assign(target, step.set);
+      if (step.beside) Object.assign(beside[0].target, step.beside);
+      if (step.thenNavigate !== undefined) {
+        flushSync();
+        history.pushState({}, "", step.thenNavigate || "?");
+      }
+      if (step.thenCleanup) {
+        flushSync();
+        tracked.cleanup();
+      }
+    } else if ("append" in step)
+      for (const [key, value] of Object.entries(step.append))
+        target[key].push(value);
+    else if ("merge" in step)
+      for (const [key, value] of Object.entries(step.merge))
+        Object.assign(target[key], value);
     else if ("navigate" in step)
-      history.pushState({}, "", step.navigate || "?");
+      history.pushState(step.state ?? {}, "", step.navigate || "?");
+    else if ("dispatch" in step) window.dispatchEvent(new Event(step.dispatch));
     else if ("hash" in step) await changeHash(step.hash, step.popstate);
     else if ("back" in step) await traverse("back");
     else if ("forward" in step) await traverse("forward");
@@ -196,7 +268,7 @@ const play = async <Seen>(
     else if ("prefix" in step) tracked.prefix(step.prefix);
     else if ("setPrefix" in step) prefix = step.setPrefix;
     else tracked.cleanup();
-    observations.push(look());
+    observations.push(await look());
   }
   return observations;
 };
@@ -212,6 +284,76 @@ export const session = (scenario: Scenario) =>
       errors,
     }),
   );
+
+/**
+ * How many times the History API was called (each call announced by the
+ * `urlchange` event URLParameterize fires for it, with a `detail` of
+ * "history") while tracking started, and during each step. A step that
+ * pushes a URL itself counts its own call too.
+ */
+export const writes = (scenario: Scenario) => {
+  let calls = 0;
+  const count = (event: Event) =>
+    void ((event as CustomEvent).detail === "history" && calls++);
+  window.addEventListener("urlchange", count);
+  onTestFinished(() => window.removeEventListener("urlchange", count));
+  return play(
+    scenario,
+    () => {
+      const made = calls;
+      calls = 0;
+      return made;
+    },
+    () => void (calls = 0),
+  );
+};
+
+/** What markup showing the tracked object would show: its values read through a `$derived`, once tracking started and after each step. */
+export const rendered = (scenario: Scenario) => {
+  let seen: { readonly current: string } | undefined;
+  return play(scenario, ({ target }) => {
+    seen ??= derived(() =>
+      JSON.stringify(Object.keys(scenario.initial).map((key) => target[key])),
+    );
+    return JSON.parse(seen.current) as unknown[];
+  });
+};
+
+/** `history.state` once tracking started and after each step. */
+export const historyState = (scenario: Scenario) =>
+  play(scenario, () => $state.snapshot(history.state));
+
+/**
+ * Tracks `holder`, then `conflicting`, which is expected to throw for a key
+ * `holder` holds; cleans up `holder`, and tracks `retry`. Returns the error,
+ * and the URL's parameters once `retry` is tracked (or the error it threw).
+ */
+export const afterConflict = (scenario: {
+  holder: Instance;
+  conflicting: Instance;
+  retry: Instance;
+}) => {
+  history.pushState(null, "", "/");
+  onTestFinished(() => void history.replaceState(null, "", "/"));
+  const attempt = (instance: Instance) =>
+    URLParameterize(targetOf(instance), instance.handlers, instance.options);
+  const holder = attempt(scenario.holder);
+  let error: string | undefined;
+  try {
+    attempt(scenario.conflicting).cleanup();
+  } catch (thrown) {
+    error = (thrown as Error).message;
+  }
+  holder.cleanup();
+  try {
+    const retried = attempt(scenario.retry);
+    const url = urlParams();
+    retried.cleanup();
+    return { error, retried: url };
+  } catch (thrown) {
+    return { error, retried: (thrown as Error).message };
+  }
+};
 
 /** What `key` returned for each tracked property, once tracking started and after each step. */
 export const keys = (scenario: Scenario) => {
