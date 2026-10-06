@@ -1,5 +1,7 @@
 # URLParameterize
 
+Slurp (<ins style="color:white"><span style="color:#aa1e1e">**S**</span><sub>_ve_</sub><span style="color:#aa1e1e">**l**</span><sub>_te_</sub> <span style="color:#aa1e1e">**ur**</span><sub>_l_</sub> <span style="color:#aa1e1e">**p**</span><sub>_arameterizer_</sub></ins>)
+
 Bidirectional binding between Svelte 5 `$state` properties and URL query parameters. Mutating a tracked property updates the URL; browser navigation, manual edits, or `pushState`/`replaceState` from elsewhere flow back into the state.
 
 Built on Svelte 5 runes — call sites must live inside a rune-aware context (component script, `.svelte.ts` module, or `$effect.root`).
