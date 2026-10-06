@@ -215,7 +215,9 @@ declare namespace withParams {
 /**
  * Reads the values a URL holds for `param` into `target[key]`, through the
  * handler. Entries of a multiple-entry parameter that are unchanged since
- * `previous` keep their resolved value.
+ * `previous` keep their resolved value. A multiple-entry property gets a new
+ * array, assigned once every entry has been read: one that cannot be read
+ * leaves the property as it was, and assigning is what `$state.raw` sees.
  */
 export const assign = (
   target: object,
@@ -229,11 +231,11 @@ export const assign = (
   if (supportsMultiple(handler)) {
     const current = record[key];
     const array: unknown[] = Array.isArray(current) ? current : [];
-    for (let index = 0; index < values.length; index++)
-      if (index >= array.length || values[index] !== previous[index])
-        array[index] = evaluate(handler, values[index], param, index);
-    array.length = values.length;
-    if (array !== current) record[key] = array;
+    record[key] = values.map((value, index) =>
+      index < array.length && value === previous[index]
+        ? array[index]
+        : evaluate(handler, value, param, index),
+    );
   } else
     record[key] =
       values.length === 0
@@ -263,6 +265,24 @@ declare namespace assign {
       ]
     >,
     Expect<Target["tags"], "=", ["x"]>
+  >;
+
+  type Kept = Fixture<{ tags: string[] }, { tags: ["kept a", "kept b"] }>;
+
+  /** entries unchanged since the URL was last read keep their value: resolve runs only for those that changed */
+  export type KeepsUnchanged = Given<
+    Invoke<
+      typeof assign,
+      [
+        target: Kept,
+        key: "tags",
+        handler: Tags,
+        param: "tags",
+        values: ['"a"', '"x"'],
+        previous: ['"a"', '"b"'],
+      ]
+    >,
+    Expect<Kept["tags"], "=", ["kept a", "x"]>
   >;
 
   type Unset = Fixture<{ tags?: string[] }, {}>;
